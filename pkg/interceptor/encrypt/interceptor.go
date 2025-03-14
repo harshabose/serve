@@ -1,6 +1,7 @@
 package encrypt
 
 import (
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -16,13 +18,16 @@ import (
 
 type collection struct {
 	encryptor cipher.AEAD // For encrypting outgoing messages
-	decryptor cipher.AEAD // For decrypting incoming messages
+	sessionID []byte
+	ctx       context.Context
+	cancel    context.CancelFunc
 }
 
 type Interceptor struct {
 	interceptor.NoOpInterceptor
 	collection map[*websocket.Conn]*collection
 	mux        sync.Mutex
+	ctx        context.Context
 }
 
 func (encrypt *Interceptor) BindSocketConnection(connection *websocket.Conn) error {
@@ -48,23 +53,34 @@ func (encrypt *Interceptor) BindSocketConnection(connection *websocket.Conn) err
 	}
 	_ = gcm
 
+	sessionID := make([]byte, 16)
+	if _, err := io.ReadFull(rand.Reader, sessionID); err != nil {
+		fmt.Println("Failed to generate new session ID:", err)
+	}
+
+	ctx, cancel := context.WithCancel(encrypt.ctx)
+	encrypt.collection[connection] = &collection{
+		encryptor: gcm,
+		sessionID: nil,
+		ctx:       ctx,
+		cancel:    cancel,
+	}
+
 	// TODO: Exchange keys with the peer using a key exchange protocol like Diffie-Hellman
 	// TODO: Store different keys for encryption and decryption
 
-	encrypt.collection[connection] = &collection{
-		encryptor: gcm,
-		decryptor: gcm,
-	}
+	go encrypt.loop(connection)
+
 	return nil
 }
 
 func (encrypt *Interceptor) BindSocketWriter(writer interceptor.Writer) interceptor.Writer {
 	return interceptor.WriterFunc(func(conn *websocket.Conn, messageType websocket.MessageType, data []byte) error {
 		encrypt.mux.Lock()
-		connState, exists := encrypt.collection[conn]
+		collection, exists := encrypt.collection[conn]
 		encrypt.mux.Unlock()
 
-		if !exists || connState.encryptor == nil {
+		if !exists || collection.encryptor == nil {
 			// No encryption configured for this connection yet
 			// Pass through unencrypted
 			return writer.Write(conn, messageType, data)
@@ -77,8 +93,9 @@ func (encrypt *Interceptor) BindSocketWriter(writer interceptor.Writer) intercep
 		}
 
 		// Encrypt the data
-		encryptor := connState.encryptor
-		encryptedData := encryptor.Seal(nil, nonce, data, nil)
+		encryptor := collection.encryptor
+		sessionID := collection.sessionID
+		encryptedData := encryptor.Seal(nil, nonce, data, sessionID)
 
 		// Format the encrypted message:
 		// [2-byte nonce length][nonce][encrypted data]
@@ -104,7 +121,7 @@ func (encrypt *Interceptor) BindSocketReader(reader interceptor.Reader) intercep
 		collection, exists := encrypt.collection[conn]
 		encrypt.mux.Unlock()
 
-		if !exists || collection.decryptor == nil || len(encryptedData) < 2 {
+		if !exists || collection.encryptor == nil || len(encryptedData) < 2 {
 			// No decryption configured or data too short to be encrypted
 			// Pass through as-is
 			return messageType, encryptedData, nil
@@ -123,8 +140,9 @@ func (encrypt *Interceptor) BindSocketReader(reader interceptor.Reader) intercep
 		ciphertext := encryptedData[2+nonceLen:]
 
 		// Decrypt the data
-		decryptor := collection.decryptor
-		plaintext, err := decryptor.Open(nil, nonce, ciphertext, nil)
+		decryptor := collection.encryptor
+		sessionID := collection.sessionID
+		plaintext, err := decryptor.Open(nil, nonce, ciphertext, sessionID)
 		if err != nil {
 			return messageType, encryptedData, fmt.Errorf("decryption failed: %w", err)
 		}
@@ -137,6 +155,13 @@ func (encrypt *Interceptor) UnBindSocketConnection(connection *websocket.Conn) {
 	encrypt.mux.Lock()
 	defer encrypt.mux.Unlock()
 
+	collection, exists := encrypt.collection[connection]
+	if !exists {
+		fmt.Println("connection does not exists")
+		return
+	}
+
+	collection.cancel()
 	delete(encrypt.collection, connection)
 }
 
@@ -151,4 +176,42 @@ func (encrypt *Interceptor) Close() error {
 	encrypt.collection = make(map[*websocket.Conn]*collection)
 
 	return nil
+}
+
+func (encrypt *Interceptor) loop(connection *websocket.Conn) {
+
+	encrypt.mux.Lock()
+	collection, exists := encrypt.collection[connection]
+	if !exists {
+		fmt.Println("connection does not exists")
+		return
+	}
+	ctx := collection.ctx
+	encrypt.mux.Unlock()
+
+	timer := time.NewTicker(5 * time.Minute)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-timer.C:
+			encrypt.mux.Lock()
+
+			newSessionID := make([]byte, 16)
+			if _, err := io.ReadFull(rand.Reader, newSessionID); err != nil {
+				fmt.Println("Failed to generate new session ID:", err)
+				continue
+			}
+
+			if collection, exists := encrypt.collection[connection]; exists {
+				collection.sessionID = nil // Keep nil until sending to peer mechanism is set
+			}
+
+			// send the update sessionID to peer
+
+			encrypt.mux.Unlock()
+		case <-ctx.Done():
+			return
+		}
+	}
 }

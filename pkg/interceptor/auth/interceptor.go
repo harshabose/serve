@@ -10,8 +10,8 @@ type Interceptor struct {
 	interceptor.NoOpInterceptor
 }
 
-func (auth *Interceptor) BindConnection(connection *websocket.Conn) {
-	return
+func (auth *Interceptor) BindSocketConnection(connection *websocket.Conn) error {
+	return nil
 }
 
 func (auth *Interceptor) Close() error {
