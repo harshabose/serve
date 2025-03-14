@@ -20,30 +20,30 @@ func flattenErrs(errs []error) error {
 
 type multiError []error
 
-func (me multiError) Error() string {
-	var errstrings []string
+func (errs multiError) Error() string {
+	var errStrings []string
 
-	for _, err := range me {
+	for _, err := range errs {
 		if err != nil {
-			errstrings = append(errstrings, err.Error())
+			errStrings = append(errStrings, err.Error())
 		}
 	}
 
-	if len(errstrings) == 0 {
+	if len(errStrings) == 0 {
 		return "multiError must contain multiple error but is empty"
 	}
 
-	return strings.Join(errstrings, "\n")
+	return strings.Join(errStrings, "\n")
 }
 
-func (me multiError) Is(err error) bool {
-	for _, e := range me {
+func (errs multiError) Is(err error) bool {
+	for _, e := range errs {
 		if errors.Is(e, err) {
 			return true
 		}
-		var me2 multiError
-		if errors.As(e, &me2) {
-			if me2.Is(err) {
+		var errs2 multiError
+		if errors.As(e, &errs2) {
+			if errs2.Is(err) {
 				return true
 			}
 		}
