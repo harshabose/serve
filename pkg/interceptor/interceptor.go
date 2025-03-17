@@ -3,8 +3,11 @@ package interceptor
 import (
 	"context"
 	"io"
+	"sync"
 
 	"github.com/coder/websocket"
+
+	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
 // Registry maintains a collection of interceptor factories that can be used to
@@ -47,6 +50,12 @@ type Factory interface {
 	NewInterceptor(context.Context, string) (Interceptor, error)
 }
 
+// Connection defines a interface
+type Connection interface {
+	Write(context.Context, []byte) error
+	Read(ctx context.Context) ([]byte, error)
+}
+
 // Interceptor defines a transformer that can modify the behavior of websocket connections.
 // Interceptors can bind to the connection itself, its writers (for outgoing messages),
 // and its readers (for incoming messages). This pattern enables adding functionalities
@@ -55,41 +64,42 @@ type Factory interface {
 type Interceptor interface {
 	// BindSocketConnection is called when a new websocket connection is established.
 	// It gives the interceptor an opportunity to set up any connection-specific
-	// state or perform initialization tasks for the given connection.
+	// state or perform initialization tasks for the given connection, writer, and reader.
 	// Returns an error if the binding process fails, which typically would
 	// result in the connection being rejected.
-	BindSocketConnection(*websocket.Conn) error
+	BindSocketConnection(Connection, Writer, Reader) error
 
-	// BindSocketWriter wraps a writer that handles messages going out to clients.
+	// InterceptSocketWriter wraps a writer that handles messages going out to clients.
 	// The interceptor receives the original writer and returns a modified writer
 	// that adds the interceptor's functionality. For example, an encryption interceptor
 	// would return a writer that encrypts messages before passing them to the original writer.
 	// The returned writer will be used for all future write operations on the connection.
-	BindSocketWriter(Writer) Writer
+	InterceptSocketWriter(Writer) Writer
 
-	// BindSocketReader wraps a reader that handles messages coming in from clients.
+	// InterceptSocketReader wraps a reader that handles messages coming in from clients.
 	// The interceptor receives the original reader and returns a modified reader
 	// that adds the interceptor's functionality. For example, a logging interceptor
 	// would return a reader that logs messages after receiving them from the original reader.
 	// The returned reader will be used for all future read operations on the connection.
-	BindSocketReader(Reader) Reader
+	InterceptSocketReader(Reader) Reader
 
 	// UnBindSocketConnection is called when a websocket connection is closed or removed.
 	// It cleans up any connection-specific resources and state maintained by the interceptor
-	// for the given connection, removing it from the collection map to prevent memory leaks.
-	UnBindSocketConnection(*websocket.Conn)
+	// for the given connection, as well as associated writer and reader.
+	// This prevents memory leaks and ensures proper resource cleanup.
+	UnBindSocketConnection(Connection)
 
-	// UnBindSocketWriter is called when a writer is being removed or when the
+	// UnInterceptSocketWriter is called when a writer is being removed or when the
 	// connection is closing. This gives the interceptor an opportunity to clean up
 	// any resources or state associated with the writer. The interceptor should
 	// release any references to the writer to prevent memory leaks.
-	UnBindSocketWriter(Writer)
+	UnInterceptSocketWriter(Writer)
 
-	// UnBindSocketReader is called when a reader is being removed or when the
+	// UnInterceptSocketReader is called when a reader is being removed or when the
 	// connection is closing. This gives the interceptor an opportunity to clean up
 	// any resources or state associated with the reader. The interceptor should
 	// release any references to the reader to prevent memory leaks.
-	UnBindSocketReader(Reader)
+	UnInterceptSocketReader(Reader)
 
 	// Closer interface implementation for resource cleanup.
 	// Close is called when the interceptor itself is being shut down.
@@ -100,63 +110,89 @@ type Interceptor interface {
 // Writer is an interface for writing messages to a websocket connection
 type Writer interface {
 	// Write sends a message to the connection
-	// Takes the connection, message type, and data to write
+	// Takes the connection, message type, and message to write
 	// Returns any error encountered during writing
-	Write(conn *websocket.Conn, messageType websocket.MessageType, data []byte) error
+	Write(conn Connection, messageType websocket.MessageType, message message.Message) error
 }
 
 // Reader is an interface for reading messages from a websocket connection
 type Reader interface {
 	// Read reads a message from the connection
 	// Returns the message type, message data, and any error
-	Read(conn *websocket.Conn) (messageType websocket.MessageType, data []byte, err error)
+	Read(conn Connection) (messageType websocket.MessageType, message message.Message, err error)
 }
 
 // ReaderFunc is a function type that implements the Reader interface
-type ReaderFunc func(conn *websocket.Conn) (messageType websocket.MessageType, data []byte, err error)
+type ReaderFunc func(conn Connection) (messageType websocket.MessageType, message message.Message, err error)
 
 // Read implements the Reader interface for ReaderFunc
-func (f ReaderFunc) Read(conn *websocket.Conn) (messageType websocket.MessageType, data []byte, err error) {
+func (f ReaderFunc) Read(conn Connection) (messageType websocket.MessageType, message message.Message, err error) {
 	return f(conn)
 }
 
 // WriterFunc is a function type that implements the Writer interface
-type WriterFunc func(conn *websocket.Conn, messageType websocket.MessageType, data []byte) error
+type WriterFunc func(conn Connection, messageType websocket.MessageType, message message.Message) error
 
 // Write implements the Writer interface for WriterFunc
-func (f WriterFunc) Write(conn *websocket.Conn, messageType websocket.MessageType, data []byte) error {
-	return f(conn, messageType, data)
+func (f WriterFunc) Write(conn Connection, messageType websocket.MessageType, message message.Message) error {
+	return f(conn, messageType, message)
+}
+
+// State holds all the connection-specific state for an interceptor.
+// It maintains the context for cancellation, client identification,
+// and references to the writer and reader for sending/receiving messages.
+type State struct {
+	Ctx      context.Context    // Context for managing the connection lifecycle
+	ClientID string             // Identifier for the client
+	Cancel   context.CancelFunc // Function to cancel the context and terminate all operations
+	Writer   Writer             // Writer for sending messages on this connection
+	Reader   Reader             // Reader for receiving messages from this connection
 }
 
 // NoOpInterceptor implements the Interceptor interface with no-op methods.
 // It's used as a fallback when no interceptors are configured or as a base
 // struct that other interceptors can embed to avoid implementing all methods.
-type NoOpInterceptor struct{}
+// It provides state management for connections with synchronization.
+type NoOpInterceptor struct {
+	ID    string               // Identifier for this interceptor
+	State map[Connection]State // Map of connection-specific state
+	Mutex sync.RWMutex         // Mutex for thread-safe access to State
+	Ctx   context.Context      // Parent context for all connections
+}
 
 // BindSocketConnection is a no-op implementation that accepts any connection.
-func (interceptor *NoOpInterceptor) BindSocketConnection(_ *websocket.Conn) error {
+// Along with the connection, it also receives the writer and reader that will
+// be used with this connection, though the base implementation doesn't use them.
+func (interceptor *NoOpInterceptor) BindSocketConnection(_ Connection, _ Writer, _ Reader) error {
 	return nil
 }
 
-// BindSocketWriter returns the original writer without modification.
-func (interceptor *NoOpInterceptor) BindSocketWriter(writer Writer) Writer {
+// InterceptSocketWriter returns the original writer without modification.
+// Derived interceptors would override this to add functionality to the writer.
+func (interceptor *NoOpInterceptor) InterceptSocketWriter(writer Writer) Writer {
 	return writer
 }
 
-// BindSocketReader returns the original reader without modification.
-func (interceptor *NoOpInterceptor) BindSocketReader(reader Reader) Reader {
+// InterceptSocketReader returns the original reader without modification.
+// Derived interceptors would override this to add functionality to the reader.
+func (interceptor *NoOpInterceptor) InterceptSocketReader(reader Reader) Reader {
 	return reader
 }
 
-func (interceptor *NoOpInterceptor) UnBindSocketConnection(_ *websocket.Conn) {}
+// UnBindSocketConnection performs no cleanup operations in the base implementation.
+// It receives the connection being closed along with its writer and reader.
+func (interceptor *NoOpInterceptor) UnBindSocketConnection(_ Connection) {}
 
-// UnBindSocketWriter performs no cleanup operations.
-func (interceptor *NoOpInterceptor) UnBindSocketWriter(_ Writer) {}
+// UnInterceptSocketWriter performs no cleanup operations in the base implementation.
+// Derived classes would override this to clean up resources associated with the writer.
+func (interceptor *NoOpInterceptor) UnInterceptSocketWriter(_ Writer) {}
 
-// UnBindSocketReader performs no cleanup operations.
-func (interceptor *NoOpInterceptor) UnBindSocketReader(_ Reader) {}
+// UnInterceptSocketReader performs no cleanup operations in the base implementation.
+// Derived classes would override this to clean up resources associated with the reader.
+func (interceptor *NoOpInterceptor) UnInterceptSocketReader(_ Reader) {}
 
-// Close performs no cleanup operations.
+// Close performs no cleanup operations in the base implementation.
+// Derived classes would override this to clean up global resources.
 func (interceptor *NoOpInterceptor) Close() error {
 	return nil
 }

@@ -55,7 +55,7 @@ func (encrypt *Interceptor) BindSocketConnection(connection *websocket.Conn) err
 
 	sessionID := make([]byte, 16)
 	if _, err := io.ReadFull(rand.Reader, sessionID); err != nil {
-		fmt.Println("Failed to generate new session ID:", err)
+		fmt.Println("Failed to generate new session messageID:", err)
 	}
 
 	ctx, cancel := context.WithCancel(encrypt.ctx)
@@ -199,7 +199,7 @@ func (encrypt *Interceptor) loop(connection *websocket.Conn) {
 
 			newSessionID := make([]byte, 16)
 			if _, err := io.ReadFull(rand.Reader, newSessionID); err != nil {
-				fmt.Println("Failed to generate new session ID:", err)
+				fmt.Println("Failed to generate new session messageID:", err)
 				continue
 			}
 
