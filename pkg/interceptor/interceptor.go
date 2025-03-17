@@ -142,11 +142,11 @@ func (f WriterFunc) Write(conn Connection, messageType websocket.MessageType, me
 // It maintains the context for cancellation, client identification,
 // and references to the writer and reader for sending/receiving messages.
 type State struct {
-	Ctx      context.Context    // Context for managing the connection lifecycle
-	ClientID string             // Identifier for the client
-	Cancel   context.CancelFunc // Function to cancel the context and terminate all operations
-	Writer   Writer             // Writer for sending messages on this connection
-	Reader   Reader             // Reader for receiving messages from this connection
+	Ctx    context.Context    // Context for managing the connection lifecycle
+	ID     string             // Identifier for the client
+	Cancel context.CancelFunc // Function to cancel the context and terminate all operations
+	Writer Writer             // Writer for sending messages on this connection
+	Reader Reader             // Reader for receiving messages from this connection
 }
 
 // NoOpInterceptor implements the Interceptor interface with no-op methods.

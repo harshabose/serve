@@ -22,7 +22,7 @@ type Payload interface {
 	Validate() error
 	// Process handles the payload-specific logic when a message is received,
 	// updating the appropriate state in the manager for the given connection.
-	Process(*manager, interceptor.Connection) error
+	Process(message.Header, interceptor.Interceptor, interceptor.Connection) error
 }
 
 // Message represents a complete ping/pong protocol message that combines

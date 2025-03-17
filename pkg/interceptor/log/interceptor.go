@@ -28,11 +28,11 @@ func (log *Interceptor) BindSocketConnection(connection interceptor.Connection, 
 	ctx, cancel := context.WithCancel(log.Ctx)
 
 	log.State[connection] = interceptor.State{
-		ClientID: "unknown",
-		Ctx:      ctx,
-		Cancel:   cancel,
-		Writer:   writer,
-		Reader:   reader,
+		ID:     "unknown",
+		Ctx:    ctx,
+		Cancel: cancel,
+		Writer: writer,
+		Reader: reader,
 	}
 
 	if err := log.manager.manage(connection); err != nil {

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/google/uuid"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 	"github.com/harshabose/skyline_sonata/serve/pkg/message"
@@ -21,8 +20,8 @@ import (
 // and maintains connection state through the manager.
 type Interceptor struct {
 	interceptor.NoOpInterceptor
-	manager  *manager
-	interval time.Duration // Time between ping messages
+	internalState map[interceptor.Connection]*state
+	interval      time.Duration // Time between ping messages
 }
 
 // BindSocketConnection initializes tracking for a new websocket connection.
@@ -37,30 +36,36 @@ type Interceptor struct {
 //
 // Returns:
 //   - An error if the connection is already being tracked or if manager creation fails
-func (ping *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) error {
-	ping.Mutex.Lock()
-	defer ping.Mutex.Unlock()
+func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) error {
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
 
-	_, exists := ping.State[connection]
+	_, exists := i.State[connection]
 	if exists {
 		return errors.New("owner already exists")
 	}
 
-	ctx, cancel := context.WithCancel(ping.Ctx)
+	ctx, cancel := context.WithCancel(i.Ctx)
 
-	ping.State[connection] = interceptor.State{
-		ClientID: "unknown", // unknown until first pong
-		Ctx:      ctx,
-		Cancel:   cancel,
-		Writer:   writer, // full-stack writer (this is different from the writer in InterceptSocketWriter)
-		Reader:   reader,
+	i.State[connection] = interceptor.State{
+		ID:     "unknown", // unknown until first pong
+		Ctx:    ctx,
+		Cancel: cancel,
+		Writer: writer, // full-stack writer (this is different from the writer in InterceptSocketWriter)
+		Reader: reader,
 	}
 
-	if err := ping.manager.manage(connection); err != nil {
-		return err
+	if _, exists := i.internalState[connection]; exists {
+		return errors.New("connection already exists")
 	}
 
-	go ping.loop(ctx, connection)
+	i.internalState[connection] = &state{
+		pings: make([]*ping, 0),
+		pongs: make([]*pong, 0),
+		max:   100,
+	}
+
+	// SEND INITIAL PING
 
 	return nil
 }
@@ -75,19 +80,18 @@ func (ping *Interceptor) BindSocketConnection(connection interceptor.Connection,
 //
 // Returns:
 //   - A wrapped writer that processes ping messages
-func (ping *Interceptor) InterceptSocketWriter(writer interceptor.Writer) interceptor.Writer {
+func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) interceptor.Writer {
 	return interceptor.WriterFunc(func(conn interceptor.Connection, messageType websocket.MessageType, message message.Message) error {
 		msg, ok := message.(*Message) // if ok, its Ping or Pong message
 		if !ok {
 			return writer.Write(conn, messageType, message)
 		}
 
-		ping.Mutex.Lock()
-		defer ping.Mutex.Unlock()
+		i.Mutex.Lock()
+		defer i.Mutex.Unlock()
 
-		if state, exists := ping.State[conn]; exists {
-			msg.ReceiverID = state.ClientID
-			if err := ping.manager.Process(msg, conn); err != nil {
+		if _, exists := i.State[conn]; exists {
+			if err := msg.Payload.Process(msg.Header, i, conn); err != nil {
 				fmt.Println("error while processing ping pong message: ", err.Error())
 			}
 		}
@@ -106,23 +110,23 @@ func (ping *Interceptor) InterceptSocketWriter(writer interceptor.Writer) interc
 //
 // Returns:
 //   - A wrapped reader that processes pong messages and updates statistics
-func (ping *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
+func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
 	return interceptor.ReaderFunc(func(conn interceptor.Connection) (websocket.MessageType, message.Message, error) {
 		messageType, msg, err := reader.Read(conn)
 		if err != nil {
 			return messageType, msg, err
 		}
 
-		pingMsg, ok := msg.(*Message)
+		Msg, ok := msg.(*Message)
 		if !ok {
 			return messageType, msg, err
 		}
 
-		ping.Mutex.Lock()
-		defer ping.Mutex.Unlock()
+		i.Mutex.Lock()
+		defer i.Mutex.Unlock()
 
-		if _, exists := ping.State[conn]; exists {
-			if err := ping.manager.Process(pingMsg, conn); err != nil {
+		if _, exists := i.State[conn]; exists {
+			if err := Msg.Payload.Process(Msg.Header, i, conn); err != nil {
 				fmt.Println("error while processing ping pong message: ", err.Error())
 			}
 		}
@@ -141,15 +145,15 @@ func (ping *Interceptor) InterceptSocketReader(reader interceptor.Reader) interc
 //   - connection: The websocket connection to remove
 //   - writer: The writer associated with this connection (unused)
 //   - reader: The reader associated with this connection (unused)
-func (ping *Interceptor) UnBindSocketConnection(connection interceptor.Connection) {
-	ping.Mutex.Lock()
-	defer ping.Mutex.Unlock()
+func (i *Interceptor) UnBindSocketConnection(connection interceptor.Connection) {
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
 
-	ping.State[connection].Cancel()
-	if err := ping.manager.unmanage(connection); err != nil {
-		fmt.Println("error while unbinding connection:", err.Error())
-	}
-	delete(ping.State, connection)
+	i.State[connection].Cancel()
+	// if err := i.manager.unmanage(connection); err != nil {
+	// 	fmt.Println("error while unbinding connection:", err.Error())
+	// }
+	delete(i.State, connection)
 }
 
 // UnInterceptSocketWriter performs cleanup when a writer is being removed.
@@ -159,7 +163,7 @@ func (ping *Interceptor) UnBindSocketConnection(connection interceptor.Connectio
 //
 // Parameters:
 //   - writer: The writer being removed (unused)
-func (ping *Interceptor) UnInterceptSocketWriter(_ interceptor.Writer) {
+func (i *Interceptor) UnInterceptSocketWriter(_ interceptor.Writer) {
 	// If left unimplemented, NoOpInterceptor's default implementation will be used
 	// But, for reference, this method is implemented
 }
@@ -171,7 +175,7 @@ func (ping *Interceptor) UnInterceptSocketWriter(_ interceptor.Writer) {
 //
 // Parameters:
 //   - reader: The reader being removed (unused)
-func (ping *Interceptor) UnInterceptSocketReader(_ interceptor.Reader) {
+func (i *Interceptor) UnInterceptSocketReader(_ interceptor.Reader) {
 	// If left unimplemented, NoOpInterceptor's default implementation will be used
 	// But, for reference, this method is implemented
 }
@@ -184,65 +188,70 @@ func (ping *Interceptor) UnInterceptSocketReader(_ interceptor.Reader) {
 //
 // Returns:
 //   - Any error encountered during cleanup (currently always nil)
-func (ping *Interceptor) Close() error {
-	ping.Mutex.Lock()
-	defer ping.Mutex.Unlock()
+func (i *Interceptor) Close() error {
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
 
-	for _, state := range ping.State {
+	for _, state := range i.State {
 		state.Cancel()
 		state.Reader = nil
 		state.Writer = nil
 	}
-	ping.State = make(map[interceptor.Connection]interceptor.State)
-	ping.manager.cleanup()
+	i.State = make(map[interceptor.Connection]interceptor.State)
 
 	return nil
 }
 
-// loop runs a periodic ping sender for a specific connection.
-// This goroutine sends ping messages at the configured interval until
-// the context is canceled (typically when the connection is closed).
-// For each ping, it generates a unique message ID, creates a ping message
-// with the current timestamp, and sends it using the connection's writer.
-// The loop ensures each ping is processed by the manager to track statistics.
-//
-// Parameters:
-//   - ctx: Context that controls the lifetime of this loop
-//   - conn: The websocket connection to send pings on
-func (ping *Interceptor) loop(ctx context.Context, conn interceptor.Connection) {
-	ticker := time.NewTicker(ping.interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			payload := &Ping{
-				MessageID: uuid.NewString(),
-				Timestamp: time.Now(),
-			}
-
-			if err := payload.Validate(); err != nil {
-				fmt.Println("error while sending ping:", err.Error())
-				continue
-			}
-
-			ping.Mutex.Lock()
-
-			state, exists := ping.State[conn]
-			if !exists {
-				fmt.Println("state for connection does not exists")
-			}
-
-			msg := CreateMessage("server", state.ClientID, payload)
-
-			if err := state.Writer.Write(conn, websocket.MessageText, msg); err != nil {
-				fmt.Println("error while sending ping:", err.Error())
-				continue
-			}
-
-			ping.Mutex.Unlock()
-		}
+func (payload *Ping) Process(header message.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+	if err := payload.Validate(); err != nil {
+		return err
 	}
+
+	i := interceptor.(*Interceptor)
+
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
+
+	state, exists := i.State[connection]
+	if !exists {
+		return errors.New("connection does not exists")
+	}
+
+	internalState, exists := i.internalState[connection]
+	if !exists {
+		return errors.New("connection does not exists")
+	}
+
+	internalState.recordPing(payload)
+
+	pong := CreateMessage(i.ID, header.SenderID, &Pong{payload.MessageID, payload.Timestamp, time.Now()})
+
+	return state.Writer.Write(connection, websocket.MessageText, pong)
+}
+
+func (payload *Pong) Process(header message.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+	if err := payload.Validate(); err != nil {
+		return err
+	}
+
+	i := interceptor.(*Interceptor)
+
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
+
+	state, exists := i.State[connection]
+	if !exists {
+		return errors.New("connection does not exists")
+	}
+
+	internalState, exists := i.internalState[connection]
+	if !exists {
+		return errors.New("connection does not exists")
+	}
+
+	internalState.recordPong(payload)
+
+	ping := CreateMessage(i.ID, header.SenderID, &Ping{payload.MessageID, time.Now()})
+
+	return state.Writer.Write(connection, websocket.MessageText, ping)
 }

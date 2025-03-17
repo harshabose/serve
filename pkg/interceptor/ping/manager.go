@@ -84,9 +84,9 @@ func (manager *manager) unmanage(connection interceptor.Connection) error {
 //
 // Returns:
 //   - Any error encountered during processing
-func (manager *manager) Process(msg *Message, connection interceptor.Connection) error {
-	return msg.Payload.Process(manager, connection)
-}
+// func (manager *manager) Process(msg *Message, connection interceptor.Connection) error {
+// 	return msg.Payload.Process(manager, connection)
+// }
 
 // Process implements the Payload.Process method for Pong messages.
 // It validates the pong message, finds the associated connection state,
@@ -98,23 +98,23 @@ func (manager *manager) Process(msg *Message, connection interceptor.Connection)
 //
 // Returns:
 //   - Error if validation fails or no state exists for the connection
-func (payload *Pong) Process(manager *manager, connection interceptor.Connection) error {
-	if err := payload.Validate(); err != nil {
-		return err
-	}
-
-	manager.mux.Lock()
-	defer manager.mux.Unlock()
-
-	state, exists := manager.states[connection]
-	if !exists {
-		return errors.New("no ping-pong-er exists")
-	}
-	state.recordPong(payload)
-	// SEND PING HERE
-
-	return nil
-}
+// func (payload *Pong) Process(manager *manager, connection interceptor.Connection) error {
+// 	if err := payload.Validate(); err != nil {
+// 		return err
+// 	}
+//
+// 	manager.mux.Lock()
+// 	defer manager.mux.Unlock()
+//
+// 	state, exists := manager.states[connection]
+// 	if !exists {
+// 		return errors.New("no ping-pong-er exists")
+// 	}
+// 	state.recordPong(payload)
+// 	// SEND PING HERE
+//
+// 	return nil
+// }
 
 // Process implements the Payload.Process method for Ping messages.
 // It validates the ping message, finds the associated connection state,
@@ -128,24 +128,24 @@ func (payload *Pong) Process(manager *manager, connection interceptor.Connection
 //
 // Returns:
 //   - Error if validation fails or no state exists for the connection
-func (payload *Ping) Process(manager *manager, connection interceptor.Connection) error {
-	if err := payload.Validate(); err != nil {
-		return err
-	}
-
-	manager.mux.Lock()
-	defer manager.mux.Unlock()
-
-	state, exists := manager.states[connection]
-	if !exists {
-		return errors.New("owner does not exists")
-	}
-
-	state.recordPing(payload)
-	// SEND PONG IDEALLY
-
-	return nil
-}
+// func (payload *Ping) Process(manager *manager, connection interceptor.Connection) error {
+// 	if err := payload.Validate(); err != nil {
+// 		return err
+// 	}
+//
+// 	manager.mux.Lock()
+// 	defer manager.mux.Unlock()
+//
+// 	state, exists := manager.states[connection]
+// 	if !exists {
+// 		return errors.New("owner does not exists")
+// 	}
+//
+// 	state.recordPing(payload)
+// 	// SEND PONG IDEALLY
+//
+// 	return nil
+// }
 
 // cleanup performs a complete cleanup of all connection states.
 // It first calls cleanup on each individual state to allow state-specific
