@@ -138,6 +138,11 @@ func (f WriterFunc) Write(conn Connection, messageType websocket.MessageType, me
 	return f(conn, messageType, message)
 }
 
+type WriterReader struct {
+	Writer
+	Reader
+}
+
 // State holds all the connection-specific state for an interceptor.
 // It maintains the context for cancellation, client identification,
 // and references to the writer and reader for sending/receiving messages.

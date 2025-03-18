@@ -3,6 +3,7 @@ package room
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -11,123 +12,117 @@ import (
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 )
 
-type connection struct {
-	id   string
-	conn *websocket.Conn
-	interceptor.Writer
-	interceptor.Reader
+type client struct {
+	connection interceptor.Connection
+	interceptor.WriterReader
 }
 
 type room struct {
-	owner        *connection
+	id           string
+	owner        interceptor.Connection
 	allowed      []string
-	participants map[string]*connection
+	participants map[string]*client
 	created      time.Time
 	lastActivity time.Time
+	ttl          time.Duration
 	mux          sync.Mutex
 	ctx          context.Context
 	cancel       context.CancelFunc
 }
 
-func createRoom(ctx context.Context, owner *connection, allowed []string, ttl time.Duration) *room {
-	ctx2, cancel := context.WithTimeout(ctx, ttl)
-	room := &room{
-		owner:        owner,
-		allowed:      allowed,
-		participants: make(map[string]*connection),
-		ctx:          ctx2,
-		cancel:       cancel,
-	}
-	go room.loop()
-
-	return room
-}
-
-func (room *room) isAllowed(clientID string) bool {
-	if len(room.allowed) == 0 {
-		return true
-	}
-
-	for _, id := range room.allowed {
-		if id == clientID {
+func (room *room) isAllowed(id string) bool {
+	for _, allowed := range room.allowed {
+		if id == allowed {
 			return true
 		}
-	}
-
-	if room.owner != nil && room.owner.id == clientID {
-		return true
 	}
 
 	return false
 }
 
-func (room *room) add(conn *connection) error {
+func (room *room) add(id string, connection interceptor.Connection, wr interceptor.WriterReader) error {
 	room.mux.Lock()
 	defer room.mux.Unlock()
 
-	if !room.isAllowed(conn.id) {
-		return errors.New("participant is not allowed")
+	if !room.isAllowed(id) {
+		return errors.New("participant not allowed")
 	}
 
-	if _, exists := room.participants[conn.id]; exists {
+	if _, exists := room.participants[id]; exists {
 		return errors.New("participant already exists")
 	}
 
-	room.participants[conn.id] = conn
+	room.participants[id] = &client{connection: connection, WriterReader: wr}
 	room.lastActivity = time.Now()
 
-	// TODO: Send ClientJoined to all participants
 	return nil
 }
 
-func (room *room) remove(conn *connection) error {
+func (room *room) remove(id string, connection interceptor.Connection) error {
 	room.mux.Lock()
 	defer room.mux.Unlock()
 
-	if _, exists := room.participants[conn.id]; !exists {
+	if room.owner == connection && connection != nil {
+		fmt.Println("warn: room owner is being removed. this should not effect other functionalities until TTL")
+		room.owner = nil
+	}
+
+	if id == "unknown" {
+		if connection == nil {
+			return errors.New("neither id nor connection are trackable to be used")
+		}
+		for testID, testConn := range room.participants {
+			if testConn.connection == connection {
+				return room.remove(testID, testConn.connection)
+			}
+		}
+		return nil
+	}
+
+	if _, exists := room.participants[id]; !exists {
 		return errors.New("participant does not exists")
 	}
+	delete(room.participants, id)
 
-	delete(room.participants, conn.id)
+	// send ClientLeft message
 	room.lastActivity = time.Now()
 
-	// TODO: Send ClientLeft to all participants
 	return nil
 }
 
-func (room *room) send(sender *connection, participants []string, message []byte) error {
-	if participants == nil || len(participants) == 0 {
-		// broadcast
-		for _, participant := range room.participants {
-			participants = append(participants, participant.id)
+func (room *room) send(senderID string, payload *ChatSource) error {
+	room.mux.Lock()
+	defer room.mux.Unlock()
+
+	if len(payload.RecipientID) == 0 || payload.RecipientID == nil {
+		payload.RecipientID = room.allowed
+	}
+
+	chat := &ChatDest{RoomID: payload.RoomID, MessageID: payload.MessageID, Content: payload.Content, Timestamp: payload.Timestamp}
+
+	for _, receiverID := range payload.RecipientID {
+		msg, err := CreateMessage(senderID, receiverID, PayloadChatDestType, chat)
+		if err != nil {
+			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
+			continue
+		}
+
+		client, exists := room.participants[receiverID]
+		if !exists {
+			fmt.Println("error while sending chat message to one of the recipient:", errors.New("participant does not exists").Error())
+			continue
+		}
+
+		if err := client.Write(client.connection, websocket.MessageText, msg); err != nil {
+			fmt.Println("error while sending chat message to one of the recipient:", errors.New("participant does not exists").Error())
+			continue
 		}
 	}
 
-	for _, participant := range participants {
-		if connection, exists := room.participants[participant]; exists {
-			data, err := CreateMessage(sender.id, participant, message).Marshal()
-			if err != nil {
-				return err
-			}
-
-			if err := connection.Write(connection.conn, websocket.MessageText, data); err != nil {
-				return err
-			}
-		}
-	}
-
+	// send ClientJoined message
 	room.lastActivity = time.Now()
+
 	return nil
-}
-
-func (room *room) loop() {
-	defer room.close()
-
-	select {
-	case <-room.ctx.Done():
-		// context cancelled
-	}
-	return
 }
 
 func (room *room) close() {
@@ -135,4 +130,7 @@ func (room *room) close() {
 	defer room.mux.Unlock()
 
 	room.cancel()
+	room.owner = nil
+	room.allowed = nil
+	room.participants = make(map[string]*client)
 }

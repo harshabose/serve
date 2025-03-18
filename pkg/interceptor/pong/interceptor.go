@@ -129,12 +129,15 @@ func (i *Interceptor) Close() error {
 	return nil
 }
 
-func (payload *Ping) Process(header message.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *Ping) Process(header message.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
 
-	i := _interceptor.(*Interceptor)
+	i, ok := interceptor.(*Interceptor)
+	if !ok {
+		return errors.New("not appropriate interceptor to process this message")
+	}
 
 	i.Mutex.Lock()
 	defer i.Mutex.Unlock()
@@ -155,7 +158,10 @@ func (payload *Pong) Process(_ message.Header, interceptor interceptor.Intercept
 		return err
 	}
 
-	i := interceptor.(*Interceptor)
+	i, ok := interceptor.(*Interceptor)
+	if !ok {
+		return errors.New("not appropriate interceptor to process this message")
+	}
 
 	i.Mutex.Lock()
 	defer i.Mutex.Unlock()
