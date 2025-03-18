@@ -141,23 +141,15 @@ func (f WriterFunc) Write(conn Connection, messageType websocket.MessageType, me
 // State holds all the connection-specific state for an interceptor.
 // It maintains the context for cancellation, client identification,
 // and references to the writer and reader for sending/receiving messages.
-type State struct {
-	Ctx    context.Context    // Context for managing the connection lifecycle
-	ID     string             // Identifier for the client
-	Cancel context.CancelFunc // Function to cancel the context and terminate all operations
-	Writer Writer             // Writer for sending messages on this connection
-	Reader Reader             // Reader for receiving messages from this connection
-}
 
 // NoOpInterceptor implements the Interceptor interface with no-op methods.
 // It's used as a fallback when no interceptors are configured or as a base
 // struct that other interceptors can embed to avoid implementing all methods.
 // It provides state management for connections with synchronization.
 type NoOpInterceptor struct {
-	ID    string               // Identifier for this interceptor
-	State map[Connection]State // Map of connection-specific state
-	Mutex sync.RWMutex         // Mutex for thread-safe access to State
-	Ctx   context.Context      // Parent context for all connections
+	ID    string          // Identifier for this interceptor
+	Mutex sync.RWMutex    // Mutex for thread-safe access to State
+	Ctx   context.Context // Parent context for all connections
 }
 
 // BindSocketConnection is a no-op implementation that accepts any connection.
@@ -195,4 +187,21 @@ func (interceptor *NoOpInterceptor) UnInterceptSocketReader(_ Reader) {}
 // Derived classes would override this to clean up global resources.
 func (interceptor *NoOpInterceptor) Close() error {
 	return nil
+}
+
+// Payload defines the interface for ping/pong protocol message contents.
+// It extends the base message.Message interface with validation and processing
+// capabilities specific to the ping/pong protocol. Each implementation represents
+// a different message type within the protocol.
+//
+// Implementations must be able to validate their own content and process
+// themselves against the ping/pong state manager when received.
+type Payload interface {
+	message.Message
+	// Validate checks if the payload data is well-formed and valid
+	// according to the protocol requirements.
+	Validate() error
+	// Process handles the payload-specific logic when a message is received,
+	// updating the appropriate state in the manager for the given connection.
+	Process(message.Header, Interceptor, Connection) error
 }

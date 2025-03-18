@@ -1,13 +1,11 @@
-package ping
+package pong
 
 import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/coder/websocket"
-	"github.com/google/uuid"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 	"github.com/harshabose/skyline_sonata/serve/pkg/message"
@@ -17,8 +15,6 @@ type Interceptor struct {
 	interceptor.NoOpInterceptor
 	states     map[interceptor.Connection]*state
 	maxHistory uint16
-	pingChan   chan message.Message
-	interval   time.Duration // Time between ping messages
 }
 
 func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) error {
@@ -33,7 +29,7 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 	ctx, cancel := context.WithCancel(i.Ctx)
 
 	i.states[connection] = &state{
-		peerid: "unknown", // unknown until first pong
+		peerid: "unknown", // unknown until first ping
 		writer: writer,    // full-stack writer (this is different from the writer in InterceptSocketWriter)
 		reader: reader,
 		pings:  make([]*ping, 0),
@@ -42,8 +38,6 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 		ctx:    ctx,
 		cancel: cancel,
 	}
-
-	go i.loop(ctx, i.interval, connection)
 
 	return nil
 }
@@ -58,7 +52,7 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 			return writer.Write(conn, messageType, message)
 		}
 
-		payload := &Ping{}
+		payload := &Pong{}
 		if err := payload.Unmarshal(msg.Payload); err != nil {
 			return writer.Write(conn, messageType, message)
 		}
@@ -88,7 +82,7 @@ func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) intercept
 			return messageType, message, nil
 		}
 
-		payload := &Pong{}
+		payload := &Ping{}
 		if err := payload.Unmarshal(msg.Payload); err != nil {
 			return messageType, message, nil
 		}
@@ -135,35 +129,7 @@ func (i *Interceptor) Close() error {
 	return nil
 }
 
-func (i *Interceptor) loop(ctx context.Context, interval time.Duration, connection interceptor.Connection) {
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			state, exists := i.states[connection]
-			if !exists {
-				fmt.Println("error while trying to send ping:", errors.New("connection does not exists").Error())
-				continue
-			}
-
-			msg, err := CreateMessage(i.ID, state.peerid, &Ping{MessageID: uuid.NewString(), Timestamp: time.Now()})
-			if err != nil {
-				fmt.Println("error while trying to send ping:", err.Error())
-			}
-
-			if err := state.writer.Write(connection, websocket.MessageText, msg); err != nil {
-				fmt.Println("error while trying to send ping:", err.Error())
-				continue
-			}
-		}
-	}
-}
-
-func (payload *Ping) Process(_ message.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *Ping) Process(header message.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
@@ -178,12 +144,13 @@ func (payload *Ping) Process(_ message.Header, _interceptor interceptor.Intercep
 		return errors.New("connection does not exists")
 	}
 
+	state.peerid = header.SenderID
 	state.recordPing(payload)
 
 	return nil
 }
 
-func (payload *Pong) Process(header message.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *Pong) Process(_ message.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
@@ -198,7 +165,6 @@ func (payload *Pong) Process(header message.Header, interceptor interceptor.Inte
 		return errors.New("connection does not exists")
 	}
 
-	state.peerid = header.SenderID
 	state.recordPong(payload)
 
 	return nil

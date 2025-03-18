@@ -1,8 +1,7 @@
-package ping
+package pong
 
 import (
 	"context"
-	"time"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 )
@@ -17,22 +16,6 @@ type Option = func(*Interceptor) error
 // with the interceptor registry for automatic interceptor creation.
 type InterceptorFactory struct {
 	opts []Option // Collection of configuration options to apply
-}
-
-// WithInterval creates an option that sets the ping message interval.
-// This controls how frequently the interceptor sends ping messages to
-// connected clients to verify connection health.
-//
-// Parameters:
-//   - interval: Time duration between ping messages
-//
-// Returns:
-//   - An Option that configures the ping interval when applied to an interceptor
-func WithInterval(interval time.Duration) Option {
-	return func(interceptor *Interceptor) error {
-		interceptor.interval = interval
-		return nil
-	}
 }
 
 // WithMaxHistory creates an option that sets the maximum number of ping/pong
@@ -79,7 +62,7 @@ func CreateInterceptorFactory(options ...Option) *InterceptorFactory {
 //   - A configured ping interceptor
 //   - Any error encountered during interceptor creation or configuration
 func (factory *InterceptorFactory) NewInterceptor(ctx context.Context, id string) (interceptor.Interceptor, error) {
-	pingInterceptor := &Interceptor{
+	pongInterceptor := &Interceptor{
 		NoOpInterceptor: interceptor.NoOpInterceptor{
 			ID:  id,
 			Ctx: ctx,
@@ -88,10 +71,10 @@ func (factory *InterceptorFactory) NewInterceptor(ctx context.Context, id string
 	}
 
 	for _, option := range factory.opts {
-		if err := option(pingInterceptor); err != nil {
+		if err := option(pongInterceptor); err != nil {
 			return nil, err
 		}
 	}
 
-	return pingInterceptor, nil
+	return pongInterceptor, nil
 }

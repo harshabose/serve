@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -13,88 +14,115 @@ import (
 
 type Interceptor struct {
 	interceptor.NoOpInterceptor
-	manager *manager
+	loggerFactory *LoggerFactory
+	states        map[interceptor.Connection]*state
 }
 
-func (log *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) error {
-	log.Mutex.Lock()
-	defer log.Mutex.Unlock()
+func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, _ interceptor.Writer, _ interceptor.Reader) error {
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
 
-	_, exists := log.State[connection]
+	_, exists := i.states[connection]
 	if exists {
-		return errors.New("owner already exists")
+		return errors.New("connection already exists")
 	}
 
-	ctx, cancel := context.WithCancel(log.Ctx)
-
-	log.State[connection] = interceptor.State{
-		ID:     "unknown",
-		Ctx:    ctx,
-		Cancel: cancel,
-		Writer: writer,
-		Reader: reader,
-	}
-
-	if err := log.manager.manage(connection); err != nil {
+	loggers, err := i.loggerFactory.Create()
+	if err != nil {
 		return err
+	}
+
+	ctx, cancel := context.WithCancel(i.Ctx)
+
+	i.states[connection] = &state{
+		loggers: loggers,
+		peerid:  "unknown",
+		ctx:     ctx,
+		cancel:  cancel,
 	}
 
 	return nil
 }
 
-func (log *Interceptor) InterceptSocketWriter(writer interceptor.Writer) interceptor.Writer {
+func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) interceptor.Writer {
 	return interceptor.WriterFunc(func(connection interceptor.Connection, messageType websocket.MessageType, message message.Message) error {
-		log.Mutex.Lock() // TODO: CHECK IF MANUAL UNLOCK IS NEEDED RATHER THAN DEFER
+		i.Mutex.Lock()
 
-		if err := log.manager.Process(message, connection); err != nil {
-			fmt.Println("error while processing message in log interceptor:", err.Error())
+		state, exists := i.states[connection]
+		if !exists {
+			return errors.New("connection does not exists")
 		}
 
-		log.Mutex.Unlock()
+		ctx, cancel := context.WithTimeout(state.ctx, time.Second)
+
+		if err := state.log(ctx, message); err != nil {
+			cancel()
+			return err
+		}
+
+		cancel()
+		i.Mutex.Unlock()
 		return writer.Write(connection, messageType, message)
 	})
 }
 
-func (log *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
-	return interceptor.ReaderFunc(func(connection interceptor.Connection) (websocket.MessageType, message.Message, error) {
-		messageType, msg, err := reader.Read(connection)
+func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
+	return interceptor.ReaderFunc(func(connection interceptor.Connection) (messageType websocket.MessageType, message message.Message, err error) {
+		messageType, message, err = reader.Read(connection)
 		if err != nil {
-			return messageType, msg, err
+			return messageType, message, err
 		}
-		log.Mutex.Lock() // TODO: CHECK IF MANUAL UNLOCK IS NEEDED RATHER THAN DEFER
+		i.Mutex.Lock()
 
-		if err := log.manager.Process(msg, connection); err != nil {
-			fmt.Println("error while processing message in log interceptor:", err.Error())
+		state, exists := i.states[connection]
+		if !exists {
+			return messageType, message, err
 		}
 
-		log.Mutex.Unlock()
-		return messageType, msg, err
+		ctx, cancel := context.WithTimeout(state.ctx, time.Second)
+
+		if err := state.log(ctx, message); err != nil {
+			cancel()
+			return messageType, message, err
+		}
+
+		cancel()
+		i.Mutex.Unlock()
+		return messageType, message, err
 	})
 }
 
-func (log *Interceptor) UnBindSocketConnection(_ interceptor.Connection) {
+func (i *Interceptor) UnBindSocketConnection(connection interceptor.Connection) {
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
 
-}
-
-func (log *Interceptor) UnInterceptSocketWriter(_ interceptor.Writer) {
-
-}
-
-func (log *Interceptor) UnInterceptSocketReader(_ interceptor.Reader) {
-
-}
-
-func (log *Interceptor) Close() error {
-	log.Mutex.Lock()
-	defer log.Mutex.Unlock()
-
-	for _, state := range log.State {
-		state.Cancel()
-		state.Reader = nil
-		state.Writer = nil
+	state, exists := i.states[connection]
+	if !exists {
+		fmt.Println("connection does not exists")
+		return
 	}
-	log.State = make(map[interceptor.Connection]interceptor.State)
-	log.manager.cleanup()
+
+	state.cancel()
+	if err := state.cleanup(); err != nil {
+		fmt.Println("error while unbinding connection:", err.Error())
+		return
+	}
+	delete(i.states, connection)
+
+	return
+}
+
+func (i *Interceptor) Close() error {
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
+
+	for _, state := range i.states {
+		state.cancel()
+		if err := state.cleanup(); err != nil {
+			return err
+		}
+	}
+	i.states = make(map[interceptor.Connection]*state)
 
 	return nil
 }
