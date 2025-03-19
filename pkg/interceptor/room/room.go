@@ -84,7 +84,19 @@ func (room *room) remove(id string, connection interceptor.Connection) error {
 	}
 	delete(room.participants, id)
 
-	// send ClientLeft message
+	for id, client := range room.participants {
+		payload := &ClientLeft{RoomID: room.id, LeftAt: time.Now()}
+		msg, err := CreateMessage("server", id, PayloadChatDestType, payload)
+		if err != nil {
+			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
+			continue
+		}
+
+		if err := client.Write(client.connection, websocket.MessageText, msg); err != nil {
+			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
+			continue
+		}
+	}
 	room.lastActivity = time.Now()
 
 	return nil
@@ -119,7 +131,19 @@ func (room *room) send(senderID string, payload *ChatSource) error {
 		}
 	}
 
-	// send ClientJoined message
+	for id, client := range room.participants {
+		payload := &ClientJoined{RoomID: room.id, JoinedAt: time.Now()}
+		msg, err := CreateMessage("server", id, PayloadChatDestType, payload)
+		if err != nil {
+			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
+			continue
+		}
+
+		if err := client.Write(client.connection, websocket.MessageText, msg); err != nil {
+			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
+			continue
+		}
+	}
 	room.lastActivity = time.Now()
 
 	return nil

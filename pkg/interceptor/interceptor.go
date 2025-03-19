@@ -194,13 +194,13 @@ func (interceptor *NoOpInterceptor) Close() error {
 	return nil
 }
 
-// Payload defines the interface for ping/pong protocol message contents.
+// Payload defines the interface for protocol message contents.
 // It extends the base message.Message interface with validation and processing
-// capabilities specific to the ping/pong protocol. Each implementation represents
+// capabilities specific to the protocol. Each implementation represents
 // a different message type within the protocol.
 //
 // Implementations must be able to validate their own content and process
-// themselves against the ping/pong state manager when received.
+// themselves against their respective Interceptor when received.
 type Payload interface {
 	message.Message
 	// Validate checks if the payload data is well-formed and valid
