@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
-	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
 type PayloadType string
@@ -44,7 +43,7 @@ func PayloadUnmarshal(_type PayloadType, p json.RawMessage) error {
 }
 
 type Message struct {
-	message.Header
+	interceptor.Header
 	Type    PayloadType     `json:"type"`
 	Payload json.RawMessage `json:"payload"`
 }
@@ -56,7 +55,7 @@ func CreateMessage(senderID string, receiverID string, payloadType PayloadType, 
 	}
 
 	return &Message{
-		Header: message.Header{
+		Header: interceptor.Header{
 			SenderID:   senderID,
 			ReceiverID: receiverID,
 		},
@@ -179,7 +178,7 @@ func (payload *ChatDest) Validate() error {
 	return nil
 }
 
-func (payload *ChatDest) Process(_ message.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
+func (payload *ChatDest) Process(_ interceptor.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
 	return nil
 }
 
@@ -204,7 +203,7 @@ func (payload *ClientJoined) Validate() error {
 	return nil
 }
 
-func (payload *ClientJoined) Process(_ message.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
+func (payload *ClientJoined) Process(_ interceptor.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
 	return nil
 }
 
@@ -229,7 +228,7 @@ func (payload *ClientLeft) Validate() error {
 	return nil
 }
 
-func (payload *ClientLeft) Process(_ message.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
+func (payload *ClientLeft) Process(_ interceptor.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
 	return nil
 }
 
@@ -250,7 +249,7 @@ func (payload *Success) Validate() error {
 	return nil
 }
 
-func (payload *Success) Process(_ message.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
+func (payload *Success) Process(_ interceptor.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
 	return nil
 }
 
@@ -312,7 +311,7 @@ func (payload *Error) Validate() error {
 	return nil
 }
 
-func (payload *Error) Process(_ message.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
+func (payload *Error) Process(_ interceptor.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
 	return nil
 }
 

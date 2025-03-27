@@ -9,7 +9,6 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
-	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
 type Interceptor struct {
@@ -32,7 +31,7 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 }
 
 func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
-	return interceptor.ReaderFunc(func(connection interceptor.Connection) (websocket.MessageType, message.Message, error) {
+	return interceptor.ReaderFunc(func(connection interceptor.Connection) (websocket.MessageType, interceptor.Message, error) {
 		messageType, data, err := reader.Read(connection)
 		if err != nil {
 			return messageType, data, err
@@ -87,7 +86,7 @@ func (i *Interceptor) Close() error {
 // ================================================================================================================== //
 // ================================================================================================================== //
 
-func (payload *CreateRoom) Process(header message.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *CreateRoom) Process(header interceptor.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
@@ -128,7 +127,7 @@ func (payload *CreateRoom) Process(header message.Header, _interceptor intercept
 	return nil
 }
 
-func (payload *JoinRoom) Process(header message.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *JoinRoom) Process(header interceptor.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
@@ -155,7 +154,7 @@ func (payload *JoinRoom) Process(header message.Header, _interceptor interceptor
 	return r.add(header.SenderID, connection, wr)
 }
 
-func (payload *LeaveRoom) Process(header message.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *LeaveRoom) Process(header interceptor.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
@@ -177,7 +176,7 @@ func (payload *LeaveRoom) Process(header message.Header, _interceptor intercepto
 	return r.remove(header.SenderID, connection)
 }
 
-func (payload *ChatSource) Process(header message.Header, _interceptor interceptor.Interceptor, _ interceptor.Connection) error {
+func (payload *ChatSource) Process(header interceptor.Header, _interceptor interceptor.Interceptor, _ interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}

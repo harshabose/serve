@@ -6,8 +6,6 @@ import (
 	"sync"
 
 	"github.com/coder/websocket"
-
-	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
 // Registry maintains a collection of interceptor factories that can be used to
@@ -112,29 +110,29 @@ type Writer interface {
 	// Write sends a message to the connection
 	// Takes the connection, message type, and message to write
 	// Returns any error encountered during writing
-	Write(conn Connection, messageType websocket.MessageType, message message.Message) error
+	Write(conn Connection, messageType websocket.MessageType, message Message) error
 }
 
 // Reader is an interface for reading messages from a websocket connection
 type Reader interface {
 	// Read reads a message from the connection
 	// Returns the message type, message data, and any error
-	Read(conn Connection) (messageType websocket.MessageType, message message.Message, err error)
+	Read(conn Connection) (messageType websocket.MessageType, message Message, err error)
 }
 
 // ReaderFunc is a function type that implements the Reader interface
-type ReaderFunc func(conn Connection) (messageType websocket.MessageType, message message.Message, err error)
+type ReaderFunc func(conn Connection) (messageType websocket.MessageType, message Message, err error)
 
 // Read implements the Reader interface for ReaderFunc
-func (f ReaderFunc) Read(conn Connection) (messageType websocket.MessageType, message message.Message, err error) {
+func (f ReaderFunc) Read(conn Connection) (messageType websocket.MessageType, message Message, err error) {
 	return f(conn)
 }
 
 // WriterFunc is a function type that implements the Writer interface
-type WriterFunc func(conn Connection, messageType websocket.MessageType, message message.Message) error
+type WriterFunc func(conn Connection, messageType websocket.MessageType, message Message) error
 
 // Write implements the Writer interface for WriterFunc
-func (f WriterFunc) Write(conn Connection, messageType websocket.MessageType, message message.Message) error {
+func (f WriterFunc) Write(conn Connection, messageType websocket.MessageType, message Message) error {
 	return f(conn, messageType, message)
 }
 
@@ -202,11 +200,13 @@ func (interceptor *NoOpInterceptor) Close() error {
 // Implementations must be able to validate their own content and process
 // themselves against their respective Interceptor when received.
 type Payload interface {
-	message.Message
+	Marshal() ([]byte, error)
+
+	Unmarshal([]byte) error
 	// Validate checks if the payload data is well-formed and valid
 	// according to the protocol requirements.
 	Validate() error
 	// Process handles the payload-specific logic when a message is received,
 	// updating the appropriate state in the manager for the given connection.
-	Process(message.Header, Interceptor, Connection) error
+	Process(Header, Interceptor, Connection) error
 }

@@ -5,12 +5,10 @@ import (
 	"time"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
-	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
 type Message struct {
-	message.Header
-	Payload json.RawMessage `json:"payload"`
+	interceptor.BaseMessage
 }
 
 func CreateMessage(senderID, receiverID string, payload interceptor.Payload) (*Message, error) {
@@ -20,11 +18,13 @@ func CreateMessage(senderID, receiverID string, payload interceptor.Payload) (*M
 	}
 
 	return &Message{
-		Header: message.Header{
-			SenderID:   senderID,
-			ReceiverID: receiverID,
+		BaseMessage: interceptor.BaseMessage{
+			Header: interceptor.Header{
+				SenderID:   senderID,
+				ReceiverID: receiverID,
+			},
+			Payload: data,
 		},
-		Payload: data,
 	}, nil
 }
 

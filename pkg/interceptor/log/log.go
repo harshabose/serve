@@ -6,7 +6,7 @@ import (
 	"io"
 	"sync"
 
-	"github.com/harshabose/skyline_sonata/serve/pkg/message"
+	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 )
 
 type state struct {
@@ -30,7 +30,7 @@ func (state *state) cleanup() error {
 	return nil
 }
 
-func (state *state) log(_ context.Context, msg message.Message) error {
+func (state *state) log(_ context.Context, msg interceptor.Message) error {
 	data, err := msg.Marshal()
 	if err != nil {
 		return err

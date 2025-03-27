@@ -9,7 +9,6 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
-	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
 type Interceptor struct {
@@ -45,7 +44,7 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, _ 
 }
 
 func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) interceptor.Writer {
-	return interceptor.WriterFunc(func(connection interceptor.Connection, messageType websocket.MessageType, message message.Message) error {
+	return interceptor.WriterFunc(func(connection interceptor.Connection, messageType websocket.MessageType, message interceptor.Message) error {
 		i.Mutex.Lock()
 
 		state, exists := i.states[connection]
@@ -67,7 +66,7 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 }
 
 func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
-	return interceptor.ReaderFunc(func(connection interceptor.Connection) (messageType websocket.MessageType, message message.Message, err error) {
+	return interceptor.ReaderFunc(func(connection interceptor.Connection) (messageType websocket.MessageType, message interceptor.Message, err error) {
 		messageType, message, err = reader.Read(connection)
 		if err != nil {
 			return messageType, message, err

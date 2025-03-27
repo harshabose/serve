@@ -8,7 +8,6 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
-	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
 type Interceptor struct {
@@ -43,7 +42,7 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 }
 
 func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) interceptor.Writer {
-	return interceptor.WriterFunc(func(conn interceptor.Connection, messageType websocket.MessageType, message message.Message) error {
+	return interceptor.WriterFunc(func(conn interceptor.Connection, messageType websocket.MessageType, message interceptor.Message) error {
 		i.Mutex.Lock()
 		defer i.Mutex.Unlock()
 
@@ -68,7 +67,7 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 }
 
 func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
-	return interceptor.ReaderFunc(func(conn interceptor.Connection) (messageType websocket.MessageType, message message.Message, err error) {
+	return interceptor.ReaderFunc(func(conn interceptor.Connection) (messageType websocket.MessageType, message interceptor.Message, err error) {
 		messageType, message, err = reader.Read(conn)
 		if err != nil {
 			return messageType, message, err
@@ -129,7 +128,7 @@ func (i *Interceptor) Close() error {
 	return nil
 }
 
-func (payload *Ping) Process(header message.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *Ping) Process(header interceptor.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
@@ -153,7 +152,7 @@ func (payload *Ping) Process(header message.Header, interceptor interceptor.Inte
 	return nil
 }
 
-func (payload *Pong) Process(_ message.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *Pong) Process(_ interceptor.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}

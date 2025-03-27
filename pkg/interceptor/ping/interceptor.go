@@ -10,14 +10,13 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
-	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
 type Interceptor struct {
 	interceptor.NoOpInterceptor
 	states     map[interceptor.Connection]*state
 	maxHistory uint16
-	pingChan   chan message.Message
+	pingChan   chan interceptor.Message
 	interval   time.Duration // Time between ping messages
 }
 
@@ -49,12 +48,12 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 }
 
 func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) interceptor.Writer {
-	return interceptor.WriterFunc(func(conn interceptor.Connection, messageType websocket.MessageType, message message.Message) error {
+	return interceptor.WriterFunc(func(conn interceptor.Connection, messageType websocket.MessageType, message interceptor.Message) error {
 		i.Mutex.Lock()
 		defer i.Mutex.Unlock()
 
 		msg, ok := message.(*Message)
-		if !ok {
+		if !ok || (msg.MainType != "ping" && msg.SubType != "ping") {
 			return writer.Write(conn, messageType, message)
 		}
 
@@ -74,7 +73,7 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 }
 
 func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
-	return interceptor.ReaderFunc(func(conn interceptor.Connection) (messageType websocket.MessageType, message message.Message, err error) {
+	return interceptor.ReaderFunc(func(conn interceptor.Connection) (messageType websocket.MessageType, message interceptor.Message, err error) {
 		messageType, message, err = reader.Read(conn)
 		if err != nil {
 			return messageType, message, err
@@ -163,7 +162,7 @@ func (i *Interceptor) loop(ctx context.Context, interval time.Duration, connecti
 	}
 }
 
-func (payload *Ping) Process(_ message.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *Ping) Process(_ interceptor.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
@@ -183,7 +182,7 @@ func (payload *Ping) Process(_ message.Header, _interceptor interceptor.Intercep
 	return nil
 }
 
-func (payload *Pong) Process(header message.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *Pong) Process(header interceptor.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
