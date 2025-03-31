@@ -16,7 +16,6 @@ type Interceptor struct {
 	interceptor.NoOpInterceptor
 	states     map[interceptor.Connection]*state
 	maxHistory uint16
-	pingChan   chan interceptor.Message
 	interval   time.Duration // Time between ping messages
 }
 
@@ -162,12 +161,12 @@ func (i *Interceptor) loop(ctx context.Context, interval time.Duration, connecti
 	}
 }
 
-func (payload *Ping) Process(_ interceptor.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *Ping) Process(header interceptor.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
 
-	i := _interceptor.(*Interceptor)
+	i := interceptor.(*Interceptor)
 
 	i.Mutex.Lock()
 	defer i.Mutex.Unlock()

@@ -50,8 +50,8 @@ type Factory interface {
 
 // Connection defines a interface
 type Connection interface {
-	Write(context.Context, []byte) error
-	Read(ctx context.Context) ([]byte, error)
+	Write(ctx context.Context, typ websocket.MessageType, p []byte) error
+	Read(ctx context.Context) (websocket.MessageType, []byte, error)
 }
 
 // Interceptor defines a transformer that can modify the behavior of websocket connections.
@@ -136,11 +136,6 @@ func (f WriterFunc) Write(conn Connection, messageType websocket.MessageType, me
 	return f(conn, messageType, message)
 }
 
-type WriterReader struct {
-	Writer
-	Reader
-}
-
 // State holds all the connection-specific state for an interceptor.
 // It maintains the context for cancellation, client identification,
 // and references to the writer and reader for sending/receiving messages.
@@ -209,4 +204,6 @@ type Payload interface {
 	// Process handles the payload-specific logic when a message is received,
 	// updating the appropriate state in the manager for the given connection.
 	Process(Header, Interceptor, Connection) error
+
+	Type() SubType
 }

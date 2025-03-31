@@ -13,8 +13,8 @@ import (
 )
 
 type client struct {
+	state
 	connection interceptor.Connection
-	interceptor.WriterReader
 }
 
 type room struct {
@@ -53,6 +53,22 @@ func (room *room) add(id string, connection interceptor.Connection, wr intercept
 	}
 
 	room.participants[id] = &client{connection: connection, WriterReader: wr}
+
+	for id, client := range room.participants {
+		payload := &ClientJoined{RoomID: room.id, JoinedAt: time.Now()}
+		msg, err := CreateMessage("server", id, PayloadChatDestType, payload)
+		if err != nil {
+			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
+			continue
+		}
+
+		if err := client.Write(client.connection, websocket.MessageText, msg); err != nil {
+			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
+			continue
+		}
+	}
+
+	// TODO: SEND JoinRoomSuccessMessage
 	room.lastActivity = time.Now()
 
 	return nil
@@ -82,6 +98,9 @@ func (room *room) remove(id string, connection interceptor.Connection) error {
 	if _, exists := room.participants[id]; !exists {
 		return errors.New("participant does not exists")
 	}
+
+	// TODO: SEND SUCCESS MESSAGE
+
 	delete(room.participants, id)
 
 	for id, client := range room.participants {
@@ -110,40 +129,55 @@ func (room *room) send(senderID string, payload *ChatSource) error {
 		payload.RecipientID = room.allowed
 	}
 
+	client, exists := room.participants[senderID]
+	if !exists {
+		return errors.New("connection does not exists")
+	}
+
+	success, err := ChatRoomSuccessMessage(senderID, payload.MessageID, room.id)
+	if err != nil {
+		return err
+	}
+
+	error_, err := ChatRoomErrorMessage(senderID, payload.MessageID, room.id)
+	if err != nil {
+		return err
+	}
+
 	chat := &ChatDest{RoomID: payload.RoomID, MessageID: payload.MessageID, Content: payload.Content, Timestamp: payload.Timestamp}
 
 	for _, receiverID := range payload.RecipientID {
 		msg, err := CreateMessage(senderID, receiverID, PayloadChatDestType, chat)
 		if err != nil {
 			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
+			if err := client.Write(client.connection, websocket.MessageText, error_); err != nil {
+				return err
+			}
 			continue
 		}
 
 		client, exists := room.participants[receiverID]
 		if !exists {
 			fmt.Println("error while sending chat message to one of the recipient:", errors.New("participant does not exists").Error())
+			if err := client.Write(client.connection, websocket.MessageText, error_); err != nil {
+				return err
+			}
 			continue
 		}
 
 		if err := client.Write(client.connection, websocket.MessageText, msg); err != nil {
 			fmt.Println("error while sending chat message to one of the recipient:", errors.New("participant does not exists").Error())
+			if err := client.Write(client.connection, websocket.MessageText, error_); err != nil {
+				return err
+			}
 			continue
 		}
 	}
 
-	for id, client := range room.participants {
-		payload := &ClientJoined{RoomID: room.id, JoinedAt: time.Now()}
-		msg, err := CreateMessage("server", id, PayloadChatDestType, payload)
-		if err != nil {
-			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
-			continue
-		}
-
-		if err := client.Write(client.connection, websocket.MessageText, msg); err != nil {
-			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
-			continue
-		}
+	if err := client.Write(client.connection, websocket.MessageText, success); err != nil {
+		return err
 	}
+
 	room.lastActivity = time.Now()
 
 	return nil

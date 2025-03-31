@@ -7,32 +7,24 @@ import (
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 )
 
-type Message struct {
-	interceptor.Header
-	Payload json.RawMessage `json:"payload"`
-}
+var MainType interceptor.MainType = "pong"
 
-func CreateMessage(senderID, receiverID string, payload interceptor.Payload) (*Message, error) {
+func CreateMessage(senderID, receiverID string, payload interceptor.Payload) (*interceptor.BaseMessage, error) {
 	data, err := payload.Marshal()
 	if err != nil {
 		return nil, err
 	}
 
-	return &Message{
+	return &interceptor.BaseMessage{
 		Header: interceptor.Header{
 			SenderID:   senderID,
 			ReceiverID: receiverID,
+			Protocol:   interceptor.IProtocol,
+			MainType:   MainType,
+			SubType:    payload.Type(),
 		},
 		Payload: data,
 	}, nil
-}
-
-func (message *Message) Marshal() ([]byte, error) {
-	return json.Marshal(message)
-}
-
-func (message *Message) Unmarshal(data []byte) error {
-	return json.Unmarshal(data, message)
 }
 
 // Ping represents a connection health check message sent by the server.
@@ -76,6 +68,10 @@ func (payload *Ping) Validate() error {
 	return nil
 }
 
+func (payload *Ping) Type() interceptor.SubType {
+	return "ping"
+}
+
 // Pong represents a response to a ping message, confirming connection health.
 // It contains the original ping's message ID and timestamp, plus its own timestamp,
 // allowing the server to calculate the round-trip time.
@@ -116,4 +112,8 @@ func (payload *Pong) Unmarshal(data []byte) error {
 //   - An error if validation fails, nil otherwise
 func (payload *Pong) Validate() error {
 	return nil
+}
+
+func (payload *Pong) Type() interceptor.SubType {
+	return "pong"
 }

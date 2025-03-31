@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -46,8 +47,8 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 		i.Mutex.Lock()
 		defer i.Mutex.Unlock()
 
-		msg, ok := message.(*Message)
-		if !ok {
+		msg, ok := message.(*interceptor.BaseMessage)
+		if !ok || (msg.Header.Protocol != interceptor.IProtocol && msg.Header.MainType != MainType) {
 			return writer.Write(conn, messageType, message)
 		}
 
@@ -76,8 +77,8 @@ func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) intercept
 		i.Mutex.Lock()
 		defer i.Mutex.Unlock()
 
-		msg, ok := message.(*Message)
-		if !ok {
+		msg, ok := message.(*interceptor.BaseMessage)
+		if !ok || (msg.Header.Protocol != interceptor.IProtocol && msg.Header.MainType != MainType) {
 			return messageType, message, nil
 		}
 
@@ -149,7 +150,12 @@ func (payload *Ping) Process(header interceptor.Header, interceptor interceptor.
 	state.peerid = header.SenderID
 	state.recordPing(payload)
 
-	return nil
+	msg, err := CreateMessage(i.ID, state.peerid, &Pong{MessageID: payload.MessageID, PingTimestamp: payload.Timestamp, Timestamp: time.Now()})
+	if err != nil {
+		return err
+	}
+
+	return state.writer.Write(connection, websocket.MessageText, msg)
 }
 
 func (payload *Pong) Process(_ interceptor.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {

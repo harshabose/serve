@@ -14,7 +14,7 @@ import (
 type Interceptor struct {
 	interceptor.NoOpInterceptor
 	rooms  map[string]*room // map[roomID]room
-	states map[interceptor.Connection]interceptor.WriterReader
+	states map[interceptor.Connection]*state
 }
 
 func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) error {
@@ -25,7 +25,7 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 		return errors.New("connection already exists")
 	}
 
-	i.states[connection] = interceptor.WriterReader{Writer: writer, Reader: reader}
+	i.states[connection] = &state{writer: writer, reader: reader}
 
 	return nil
 }
@@ -37,8 +37,8 @@ func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) intercept
 			return messageType, data, err
 		}
 
-		msg, ok := data.(*Message)
-		if !ok {
+		msg, ok := data.(*interceptor.BaseMessage)
+		if !ok || (msg.Protocol != interceptor.IProtocol && msg.MainType != MainType) {
 			return messageType, data, nil
 		}
 
@@ -46,7 +46,7 @@ func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) intercept
 		defer i.Mutex.Unlock()
 
 		if _, exists := i.states[connection]; exists {
-			if err := PayloadUnmarshal(msg.Type, msg.Payload); err != nil {
+			if err := PayloadUnmarshal(msg.SubType, msg.Payload); err != nil {
 				fmt.Println("error while processing room message: ", err.Error())
 			}
 		}
@@ -78,7 +78,7 @@ func (i *Interceptor) Close() error {
 		room.close()
 	}
 	i.rooms = make(map[string]*room)
-	i.states = make(map[interceptor.Connection]interceptor.WriterReader)
+	i.states = make(map[interceptor.Connection]*state)
 
 	return nil
 }
@@ -93,7 +93,7 @@ func (payload *CreateRoom) Process(header interceptor.Header, _interceptor inter
 
 	i, ok := _interceptor.(*Interceptor)
 	if !ok {
-		return errors.New("not appropriate _interceptor to process this message")
+		return errors.New("not appropriate interceptor to process this message")
 	}
 
 	i.Mutex.Lock()
@@ -106,7 +106,7 @@ func (payload *CreateRoom) Process(header interceptor.Header, _interceptor inter
 
 	r, exists := i.rooms[payload.RoomID]
 	if exists {
-		fmt.Printf("room with ID '%s' already exists; trying to add to the room instead\n", payload.RoomID)
+		fmt.Printf("room with ID '%s' already exists; trying to add client to the room instead\n", payload.RoomID)
 		return r.add(header.SenderID, connection, wr)
 	}
 
@@ -115,7 +115,7 @@ func (payload *CreateRoom) Process(header interceptor.Header, _interceptor inter
 		id:           payload.RoomID,
 		owner:        connection,
 		allowed:      payload.ClientsToAllow,
-		participants: map[string]*client{header.SenderID: {connection: connection, WriterReader: wr}},
+		participants: map[string]*client{header.SenderID: {state{writer: wr.writer, reader: wr.reader}, connection}},
 		created:      time.Now(),
 		lastActivity: time.Now(),
 		ttl:          payload.CloseTime,

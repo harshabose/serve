@@ -28,14 +28,6 @@ func CreateMessage(senderID, receiverID string, payload interceptor.Payload) (*M
 	}, nil
 }
 
-func (message *Message) Marshal() ([]byte, error) {
-	return json.Marshal(message)
-}
-
-func (message *Message) Unmarshal(data []byte) error {
-	return json.Unmarshal(data, message)
-}
-
 // Ping represents a connection health check message sent by the server.
 // Each ping contains a unique message ID and a timestamp that can be used
 // to measure round-trip time when a corresponding pong is received.

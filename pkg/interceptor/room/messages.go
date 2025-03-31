@@ -8,68 +8,56 @@ import (
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 )
 
-type PayloadType string
+var (
+	MainType interceptor.MainType = "room"
 
-const (
-	PayloadCreateRoomType   PayloadType = "room:create_room"
-	PayloadJoinRoomType     PayloadType = "room:join_room"
-	PayloadLeaveRoomType    PayloadType = "room:leave_room"
-	PayloadChatSourceType   PayloadType = "room:chat_sent"
-	PayloadChatDestType     PayloadType = "room:chat_dest"
-	PayloadClientJoinedType PayloadType = "room:client_joined"
-	PayloadClientLeftType   PayloadType = "room:client_left"
-	PayloadSuccessType      PayloadType = "room:success"
-	PayloadErrorType        PayloadType = "room:error"
+	CreateRoomSubType       interceptor.SubType = "create_room"
+	JoinRoomSubType         interceptor.SubType = "join_room"
+	LeaveRoomSubType        interceptor.SubType = "leave_room"
+	ChatSourceRoomSubType   interceptor.SubType = "chat_source"
+	ChatDestRoomSubType     interceptor.SubType = "chat_destination"
+	ClientJoinedRoomSubType interceptor.SubType = "client_joined"
+	ClientLeftRoomSubType   interceptor.SubType = "client_left"
+	SuccessRoomSubType      interceptor.SubType = "success"
+	ErrorRoomSubType        interceptor.SubType = "error"
+
+	subTypeMap = map[interceptor.SubType]interceptor.Payload{
+		CreateRoomSubType:       &CreateRoom{},
+		JoinRoomSubType:         &JoinRoom{},
+		LeaveRoomSubType:        &LeaveRoom{},
+		ChatSourceRoomSubType:   &ChatSource{},
+		ChatDestRoomSubType:     &ChatDest{},
+		ClientJoinedRoomSubType: &ClientJoined{},
+		ClientLeftRoomSubType:   &ClientLeft{},
+		SuccessRoomSubType:      &Success{},
+		ErrorRoomSubType:        &Error{},
+	}
 )
 
-var payloadMap = map[PayloadType]interceptor.Payload{
-	PayloadCreateRoomType:   &CreateRoom{},
-	PayloadJoinRoomType:     &JoinRoom{},
-	PayloadLeaveRoomType:    &LeaveRoom{},
-	PayloadChatSourceType:   &ChatSource{},
-	PayloadChatDestType:     &ChatDest{},
-	PayloadClientJoinedType: &ClientJoined{},
-	PayloadClientLeftType:   &ClientLeft{},
-	PayloadSuccessType:      &Success{},
-	PayloadErrorType:        &Error{},
-}
-
-func PayloadUnmarshal(_type PayloadType, p json.RawMessage) error {
-	if payload, exists := payloadMap[_type]; exists {
+func PayloadUnmarshal(sub interceptor.SubType, p json.RawMessage) error {
+	if payload, exists := subTypeMap[sub]; exists {
 		return payload.Unmarshal(p)
 	}
 
 	return errors.New("processor does not exist for given type")
 }
 
-type Message struct {
-	interceptor.Header
-	Type    PayloadType     `json:"type"`
-	Payload json.RawMessage `json:"payload"`
-}
-
-func CreateMessage(senderID string, receiverID string, payloadType PayloadType, payload interceptor.Payload) (*Message, error) {
+func CreateMessage(senderID string, receiverID string, payload interceptor.Payload) (*interceptor.BaseMessage, error) {
 	data, err := payload.Marshal()
 	if err != nil {
 		return nil, err
 	}
 
-	return &Message{
+	return &interceptor.BaseMessage{
 		Header: interceptor.Header{
 			SenderID:   senderID,
 			ReceiverID: receiverID,
+			Protocol:   interceptor.IProtocol,
+			MainType:   MainType,
+			SubType:    payload.Type(),
 		},
-		Type:    payloadType,
 		Payload: data,
 	}, nil
-}
-
-func (msg *Message) Marshal() ([]byte, error) {
-	return json.Marshal(msg)
-}
-
-func (msg *Message) Unmarshal(data []byte) error {
-	return json.Unmarshal(data, msg)
 }
 
 type CreateRoom struct {
@@ -93,6 +81,10 @@ func (payload *CreateRoom) Validate() error {
 	return nil
 }
 
+func (payload *CreateRoom) Type() interceptor.SubType {
+	return CreateRoomSubType
+}
+
 // JoinRoom is sent by clients to server to join an existing room
 type JoinRoom struct {
 	RoomID string `json:"room_id"`
@@ -113,6 +105,10 @@ func (payload *JoinRoom) Validate() error {
 	return nil
 }
 
+func (payload *JoinRoom) Type() interceptor.SubType {
+	return JoinRoomSubType
+}
+
 // LeaveRoom is sent by clients to server to leave a room
 type LeaveRoom struct {
 	RoomID string `json:"room_id"`
@@ -131,6 +127,10 @@ func (payload *LeaveRoom) Validate() error {
 		return errors.New("not valid")
 	}
 	return nil
+}
+
+func (payload *LeaveRoom) Type() interceptor.SubType {
+	return LeaveRoomSubType
 }
 
 type ChatSource struct {
@@ -154,6 +154,10 @@ func (payload *ChatSource) Validate() error {
 		return errors.New("not valid")
 	}
 	return nil
+}
+
+func (payload *ChatSource) Type() interceptor.SubType {
+	return ChatSourceRoomSubType
 }
 
 type ChatDest struct {
@@ -182,6 +186,10 @@ func (payload *ChatDest) Process(_ interceptor.Header, _ interceptor.Interceptor
 	return nil
 }
 
+func (payload *ChatDest) Type() interceptor.SubType {
+	return ChatDestRoomSubType
+}
+
 // ClientJoined is broadcast to room members when a new client joins
 type ClientJoined struct {
 	RoomID   string    `json:"room_id"`
@@ -205,6 +213,10 @@ func (payload *ClientJoined) Validate() error {
 
 func (payload *ClientJoined) Process(_ interceptor.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
 	return nil
+}
+
+func (payload *ClientJoined) Type() interceptor.SubType {
+	return ClientJoinedRoomSubType
 }
 
 // ClientLeft is broadcast to room members when a client leaves
@@ -232,6 +244,10 @@ func (payload *ClientLeft) Process(_ interceptor.Header, _ interceptor.Intercept
 	return nil
 }
 
+func (payload *ClientLeft) Type() interceptor.SubType {
+	return ClientLeftRoomSubType
+}
+
 // Success is sent to clients when a room operation succeeds
 type Success struct {
 	SuccessMessage string `json:"success_message"`
@@ -253,47 +269,25 @@ func (payload *Success) Process(_ interceptor.Header, _ interceptor.Interceptor,
 	return nil
 }
 
-//
-// // Specific success message creators
-//
-// func CreateRoomSuccessMessage(senderID, , roomID string) (*Message, error) {
-// 	return CreateMessage()
-// 	}
-// }
-// func JoinRoomSuccessMessage(clientID, roomID string) *Message {
-// 	return &Message{
-// 		Header: message.Header{
-// 			SenderID:   "server",
-// 			ReceiverID: clientID,
-// 		},
-// 		Payload: &Success{
-// 			SuccessMessage: "Joined room " + roomID + " successfully",
-// 		},
-// 	}
-// }
-// func LeaveRoomSuccessMessage(clientID, roomID string) *Message {
-// 	return &Message{
-// 		Header: message.Header{
-// 			SenderID:   "server",
-// 			ReceiverID: clientID,
-// 		},
-// 		Payload: &Success{
-// 			SuccessMessage: "Left room " + roomID + " successfully",
-// 		},
-// 	}
-// }
-// func ChatRoomSuccessMessage(clientID, messageID, roomID string) *Message {
-// 	return &Message{
-// 		Header: message.Header{
-// 			SenderID:   "server",
-// 			ReceiverID: clientID,
-// 		},
-// 		Payload: &Success{
-// 			SuccessMessage: "message " + messageID + " " + roomID + " successfully",
-// 		},
-// 	}
-// }
-//
+func (payload *Success) Type() interceptor.SubType {
+	return SuccessRoomSubType
+}
+
+// Specific success message creators
+
+func JoinRoomSuccessMessage(clientID, roomID string) (*interceptor.BaseMessage, error) {
+	payload := &Success{SuccessMessage: "Joined room " + roomID + " successfully"}
+	return CreateMessage("server", clientID, payload)
+}
+func LeaveRoomSuccessMessage(clientID, roomID string) (*interceptor.BaseMessage, error) {
+	payload := &Success{SuccessMessage: "Left room " + roomID + " successfully"}
+	return CreateMessage("server", clientID, payload)
+}
+
+func ChatRoomSuccessMessage(clientID, messageID, roomID string) (*interceptor.BaseMessage, error) {
+	payload := &Success{SuccessMessage: "message " + messageID + " " + roomID + " successfully"}
+	return CreateMessage("server", clientID, payload)
+}
 
 type Error struct {
 	ErrorMessage string `json:"error_message"`
@@ -315,54 +309,26 @@ func (payload *Error) Process(_ interceptor.Header, _ interceptor.Interceptor, _
 	return nil
 }
 
-//
-// func (msg *Error) Process(_ *manager, _ *websocket.Conn, _ interceptor.Writer) error {
-// 	return nil
-// }
-//
-// // Specific error message creators
-//
-// func CreateRoomErrorMessage(clientID, roomID string) *Message {
-// 	return &Message{
-// 		Header: message.Header{
-// 			SenderID:   "server",
-// 			ReceiverID: clientID,
-// 		},
-// 		Payload: &Error{
-// 			ErrorMessage: "RoomMessage " + roomID + " created successfully",
-// 		},
-// 	}
-// }
-// func JoinRoomErrorMessage(clientID, roomID string) *Message {
-// 	return &Message{
-// 		Header: message.Header{
-// 			SenderID:   "server",
-// 			ReceiverID: clientID,
-// 		},
-// 		Payload: &Error{
-// 			ErrorMessage: "Joined room " + roomID + " successfully",
-// 		},
-// 	}
-// }
-// func LeaveRoomErrorMessage(clientID, roomID string) *Message {
-// 	return &Message{
-// 		Header: message.Header{
-// 			SenderID:   "server",
-// 			ReceiverID: clientID,
-// 		},
-// 		Payload: &Error{
-// 			ErrorMessage: "Left room " + roomID + " successfully",
-// 		},
-// 	}
-// }
-// func ChatRoomErrorMessage(clientID, messageID, roomID string) *Message {
-// 	return &Message{
-// 		Header: message.Header{
-// 			SenderID:   "server",
-// 			ReceiverID: clientID,
-// 		},
-// 		Payload: &Error{
-// 			ErrorMessage: "message " + messageID + " " + roomID + " successfully",
-// 		},
-// 	}
-// }
+func (payload *Error) Type() interceptor.SubType {
+	return ErrorRoomSubType
+}
+
+func CreateRoomErrorMessage(clientID, roomID string) (*interceptor.BaseMessage, error) {
+	payload := &Error{ErrorMessage: "RoomMessage " + roomID + " created successfully"}
+	return CreateMessage("server", clientID, payload)
+}
+
+func JoinRoomErrorMessage(clientID, roomID string) (*interceptor.BaseMessage, error) {
+	payload := &Error{ErrorMessage: "Joined room " + roomID + " successfully"}
+	return CreateMessage("server", clientID, payload)
+}
+
+func LeaveRoomErrorMessage(clientID, roomID string) (*interceptor.BaseMessage, error) {
+	payload := &Error{ErrorMessage: "Left room " + roomID + " successfully"}
+	return CreateMessage("server", clientID, payload)
+}
+
+func ChatRoomErrorMessage(clientID, messageID, roomID string) (*interceptor.BaseMessage, error) {
+	payload := &Error{ErrorMessage: "message " + messageID + " " + roomID + " successfully"}
+	return CreateMessage("server", clientID, payload)
+}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -117,7 +118,7 @@ func (socket *Socket) baseHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Println(errors.New("error while accepting socket connection"))
 	}
 
-	if err := socket.interceptor.BindSocketConnection(connection); err != nil {
+	if err := socket.interceptor.BindSocketConnection(connection, socket, socket); err != nil {
 		fmt.Println("error while handling client:", err.Error())
 		return
 	}
@@ -125,4 +126,33 @@ func (socket *Socket) baseHandler(w http.ResponseWriter, r *http.Request) {
 
 func (socket *Socket) close() {
 
+}
+
+func (socket *Socket) Write(connection interceptor.Connection, messageType websocket.MessageType, message interceptor.Message) error {
+	ctx, cancel := context.WithTimeout(socket.ctx, 100*time.Millisecond)
+	defer cancel()
+
+	data, err := message.Marshal()
+	if err != nil {
+		return err
+	}
+
+	return connection.Write(ctx, messageType, data)
+}
+
+func (socket *Socket) Read(connection interceptor.Connection) (websocket.MessageType, interceptor.Message, error) {
+	ctx, cancel := context.WithTimeout(socket.ctx, 100*time.Millisecond)
+	defer cancel()
+
+	messageType, data, err := connection.Read(ctx)
+	if err != nil {
+		return websocket.MessageText, nil, err
+	}
+
+	msg := &interceptor.BaseMessage{}
+	if err := msg.Unmarshal(data); err != nil {
+		return websocket.MessageText, nil, err
+	}
+
+	return messageType, msg, nil
 }
