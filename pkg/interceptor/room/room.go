@@ -3,31 +3,46 @@ package room
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 	"time"
 
 	"github.com/coder/websocket"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
+	"github.com/harshabose/skyline_sonata/serve/pkg/utils"
 )
-
-type client struct {
-	state
-	connection interceptor.Connection
-}
 
 type room struct {
 	id           string
 	owner        interceptor.Connection
 	allowed      []string
-	participants map[string]*client
+	participants map[interceptor.Connection]*state
 	created      time.Time
 	lastActivity time.Time
 	ttl          time.Duration
 	mux          sync.Mutex
 	ctx          context.Context
 	cancel       context.CancelFunc
+}
+
+func newRoom(ctx context.Context, cancel context.CancelFunc, connection interceptor.Connection, s *state, payload *CreateRoom) (*room, error) {
+	r := &room{
+		id:           payload.RoomID,
+		owner:        connection,
+		allowed:      payload.ClientsToAllow,
+		participants: map[interceptor.Connection]*state{connection: s},
+		created:      time.Now(),
+		lastActivity: time.Now(),
+		ttl:          payload.CloseTime,
+		ctx:          ctx,
+		cancel:       cancel,
+	}
+
+	if err := r.send("server", JoinRoomSuccessMessage(r.id), s.id); err != nil {
+		return nil, err
+	}
+
+	return r, nil
 }
 
 func (room *room) isAllowed(id string) bool {
@@ -40,147 +55,98 @@ func (room *room) isAllowed(id string) bool {
 	return false
 }
 
-func (room *room) add(id string, connection interceptor.Connection, wr interceptor.WriterReader) error {
+func (room *room) add(connection interceptor.Connection, state *state) error {
 	room.mux.Lock()
 	defer room.mux.Unlock()
 
-	if !room.isAllowed(id) {
+	merr := utils.NewMultiError()
+
+	if !room.isAllowed(state.id) {
 		return errors.New("participant not allowed")
 	}
 
-	if _, exists := room.participants[id]; exists {
+	if _, exists := room.participants[connection]; exists {
 		return errors.New("participant already exists")
 	}
 
-	room.participants[id] = &client{connection: connection, WriterReader: wr}
+	room.participants[connection] = state
 
-	for id, client := range room.participants {
-		payload := &ClientJoined{RoomID: room.id, JoinedAt: time.Now()}
-		msg, err := CreateMessage("server", id, PayloadChatDestType, payload)
-		if err != nil {
-			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
-			continue
-		}
-
-		if err := client.Write(client.connection, websocket.MessageText, msg); err != nil {
-			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
-			continue
+	for _, client := range room.participants {
+		if client.id != state.id {
+			payload := &ClientJoined{ClientID: state.id, RoomID: room.id, JoinedAt: time.Now()}
+			if err := room.send("server", payload, client.id); err != nil {
+				merr.Add(err)
+			}
 		}
 	}
 
-	// TODO: SEND JoinRoomSuccessMessage
+	merr.Add(room.send("server", JoinRoomSuccessMessage(room.id), state.id))
 	room.lastActivity = time.Now()
 
-	return nil
+	return merr.ErrorOrNil()
 }
 
-func (room *room) remove(id string, connection interceptor.Connection) error {
+func (room *room) send(from string, payload interceptor.Payload, to ...string) error {
 	room.mux.Lock()
 	defer room.mux.Unlock()
 
+	merr := utils.NewMultiError()
+
+	if len(to) == 0 || to == nil {
+		to = room.allowed
+	}
+
+	for _, id := range to {
+		msg, err := CreateMessage(from, id, payload)
+		if err != nil {
+			merr.Add(err)
+		}
+
+		if err := room.sendTo(id, msg); err != nil {
+			merr.Add(err)
+		}
+	}
+
+	return merr.ErrorOrNil()
+}
+
+func (room *room) sendTo(id string, msg *interceptor.BaseMessage) error {
+	for conn, state := range room.participants {
+		if state.id == id {
+			return state.writer.Write(conn, websocket.MessageText, msg)
+		}
+	}
+
+	return errors.New("connection does not exists")
+}
+
+func (room *room) remove(connection interceptor.Connection) error {
+	room.mux.Lock()
+	defer room.mux.Unlock()
+
+	merr := utils.NewMultiError()
+
 	if room.owner == connection && connection != nil {
-		fmt.Println("warn: room owner is being removed. this should not effect other functionalities until TTL")
+		merr.Add(errors.New("warn: room owner is being removed. this should not effect other functionalities until TTL"))
 		room.owner = nil
 	}
 
-	if id == "unknown" {
-		if connection == nil {
-			return errors.New("neither id nor connection are trackable to be used")
-		}
-		for testID, testConn := range room.participants {
-			if testConn.connection == connection {
-				return room.remove(testID, testConn.connection)
-			}
-		}
-		return nil
-	}
-
-	if _, exists := room.participants[id]; !exists {
+	state, exists := room.participants[connection]
+	if !exists {
 		return errors.New("participant does not exists")
 	}
 
-	// TODO: SEND SUCCESS MESSAGE
-
-	delete(room.participants, id)
-
-	for id, client := range room.participants {
-		payload := &ClientLeft{RoomID: room.id, LeftAt: time.Now()}
-		msg, err := CreateMessage("server", id, PayloadChatDestType, payload)
-		if err != nil {
-			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
-			continue
-		}
-
-		if err := client.Write(client.connection, websocket.MessageText, msg); err != nil {
-			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
-			continue
-		}
+	for _, client := range room.participants {
+		payload := &ClientLeft{ClientID: state.id, RoomID: room.id, LeftAt: time.Now()}
+		merr.Add(room.send("server", payload, client.id))
 	}
+
+	merr.Add(room.send("server", LeaveRoomSuccessMessage(room.id), state.id))
+
+	delete(room.participants, connection)
 	room.lastActivity = time.Now()
 
-	return nil
-}
-
-func (room *room) send(senderID string, payload *ChatSource) error {
-	room.mux.Lock()
-	defer room.mux.Unlock()
-
-	if len(payload.RecipientID) == 0 || payload.RecipientID == nil {
-		payload.RecipientID = room.allowed
-	}
-
-	client, exists := room.participants[senderID]
-	if !exists {
-		return errors.New("connection does not exists")
-	}
-
-	success, err := ChatRoomSuccessMessage(senderID, payload.MessageID, room.id)
-	if err != nil {
-		return err
-	}
-
-	error_, err := ChatRoomErrorMessage(senderID, payload.MessageID, room.id)
-	if err != nil {
-		return err
-	}
-
-	chat := &ChatDest{RoomID: payload.RoomID, MessageID: payload.MessageID, Content: payload.Content, Timestamp: payload.Timestamp}
-
-	for _, receiverID := range payload.RecipientID {
-		msg, err := CreateMessage(senderID, receiverID, PayloadChatDestType, chat)
-		if err != nil {
-			fmt.Println("error while sending chat message to one of the recipient:", err.Error())
-			if err := client.Write(client.connection, websocket.MessageText, error_); err != nil {
-				return err
-			}
-			continue
-		}
-
-		client, exists := room.participants[receiverID]
-		if !exists {
-			fmt.Println("error while sending chat message to one of the recipient:", errors.New("participant does not exists").Error())
-			if err := client.Write(client.connection, websocket.MessageText, error_); err != nil {
-				return err
-			}
-			continue
-		}
-
-		if err := client.Write(client.connection, websocket.MessageText, msg); err != nil {
-			fmt.Println("error while sending chat message to one of the recipient:", errors.New("participant does not exists").Error())
-			if err := client.Write(client.connection, websocket.MessageText, error_); err != nil {
-				return err
-			}
-			continue
-		}
-	}
-
-	if err := client.Write(client.connection, websocket.MessageText, success); err != nil {
-		return err
-	}
-
-	room.lastActivity = time.Now()
-
-	return nil
+	return merr.ErrorOrNil()
 }
 
 func (room *room) close() {
@@ -189,6 +155,22 @@ func (room *room) close() {
 
 	room.cancel()
 	room.owner = nil
-	room.allowed = nil
-	room.participants = make(map[string]*client)
+	room.allowed = make([]string, 0)
+	room.participants = make(map[interceptor.Connection]*state)
+}
+
+func (room *room) loop() {
+	defer room.close()
+
+	timer := time.NewTimer(room.ttl)
+	defer timer.Stop()
+
+	for {
+		select {
+		case <-room.ctx.Done():
+			return
+		case <-timer.C:
+			return
+		}
+	}
 }

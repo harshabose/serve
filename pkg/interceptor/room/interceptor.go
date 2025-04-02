@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"github.com/coder/websocket"
 
@@ -25,7 +24,7 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 		return errors.New("connection already exists")
 	}
 
-	i.states[connection] = &state{writer: writer, reader: reader}
+	i.states[connection] = &state{id: "unknown", writer: writer, reader: reader}
 
 	return nil
 }
@@ -46,8 +45,15 @@ func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) intercept
 		defer i.Mutex.Unlock()
 
 		if _, exists := i.states[connection]; exists {
-			if err := PayloadUnmarshal(msg.SubType, msg.Payload); err != nil {
+			payload, err := PayloadUnmarshal(msg.SubType, msg.Payload)
+			if err != nil {
 				fmt.Println("error while processing room message: ", err.Error())
+				return messageType, data, nil
+			}
+
+			if err := payload.Process(msg.Header, i, connection); err != nil {
+				fmt.Println("error while processing room message: ", err.Error())
+				return messageType, data, nil
 			}
 		}
 
@@ -63,11 +69,11 @@ func (i *Interceptor) UnBindSocketConnection(connection interceptor.Connection) 
 		delete(i.states, connection)
 	}
 
-	for _, room := range i.rooms {
-		if room.owner == connection {
-			room.cancel()
-		}
-	}
+	// for _, room := range i.rooms {
+	// 	if room.owner == connection {
+	// 		room.cancel()
+	// 	}
+	// }
 }
 
 func (i *Interceptor) Close() error {
@@ -99,31 +105,26 @@ func (payload *CreateRoom) Process(header interceptor.Header, _interceptor inter
 	i.Mutex.Lock()
 	defer i.Mutex.Unlock()
 
-	wr, exists := i.states[connection]
+	connState, exists := i.states[connection]
 	if !exists {
 		return errors.New("connection not registered yet")
 	}
 
+	connState.id = header.SenderID
+
 	r, exists := i.rooms[payload.RoomID]
 	if exists {
 		fmt.Printf("room with ID '%s' already exists; trying to add client to the room instead\n", payload.RoomID)
-		return r.add(header.SenderID, connection, wr)
+		return r.add(connection, connState)
 	}
 
 	ctx, cancel := context.WithCancel(i.Ctx)
-	r = &room{
-		id:           payload.RoomID,
-		owner:        connection,
-		allowed:      payload.ClientsToAllow,
-		participants: map[string]*client{header.SenderID: {state{writer: wr.writer, reader: wr.reader}, connection}},
-		created:      time.Now(),
-		lastActivity: time.Now(),
-		ttl:          payload.CloseTime,
-		ctx:          ctx,
-		cancel:       cancel,
+	r, err := newRoom(ctx, cancel, connection, connState, payload)
+	if err != nil {
+		return err
 	}
-	i.rooms[payload.RoomID] = r
 
+	i.rooms[payload.RoomID] = r
 	return nil
 }
 
@@ -140,10 +141,12 @@ func (payload *JoinRoom) Process(header interceptor.Header, _interceptor interce
 	i.Mutex.Lock()
 	defer i.Mutex.Unlock()
 
-	wr, exists := i.states[connection]
+	state, exists := i.states[connection]
 	if !exists {
 		return errors.New("connection not registered yet")
 	}
+
+	state.id = header.SenderID
 
 	r, exists := i.rooms[payload.RoomID]
 	if !exists {
@@ -151,7 +154,7 @@ func (payload *JoinRoom) Process(header interceptor.Header, _interceptor interce
 		return errors.New("room does not exists")
 	}
 
-	return r.add(header.SenderID, connection, wr)
+	return r.add(connection, state)
 }
 
 func (payload *LeaveRoom) Process(header interceptor.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
@@ -173,10 +176,17 @@ func (payload *LeaveRoom) Process(header interceptor.Header, _interceptor interc
 		return errors.New("room does not exists")
 	}
 
-	return r.remove(header.SenderID, connection)
+	state, exists := i.states[connection]
+	if !exists {
+		return errors.New("connection not registered yet")
+	}
+
+	state.id = header.SenderID
+
+	return r.remove(connection)
 }
 
-func (payload *ChatSource) Process(header interceptor.Header, _interceptor interceptor.Interceptor, _ interceptor.Connection) error {
+func (payload *ChatSource) Process(header interceptor.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
@@ -195,5 +205,13 @@ func (payload *ChatSource) Process(header interceptor.Header, _interceptor inter
 		return errors.New("room does not exists")
 	}
 
-	return r.send(header.SenderID, payload)
+	state, exists := i.states[connection]
+	if !exists {
+		return errors.New("connection not registered yet")
+	}
+
+	state.id = header.SenderID
+
+	p := &ChatDest{RoomID: payload.RoomID, MessageID: payload.MessageID, Content: payload.Content, Timestamp: payload.Timestamp}
+	return r.send(header.SenderID, p, payload.RecipientID...)
 }

@@ -34,12 +34,15 @@ var (
 	}
 )
 
-func PayloadUnmarshal(sub interceptor.SubType, p json.RawMessage) error {
+func PayloadUnmarshal(sub interceptor.SubType, p json.RawMessage) (interceptor.Payload, error) {
 	if payload, exists := subTypeMap[sub]; exists {
-		return payload.Unmarshal(p)
+		if err := payload.Unmarshal(p); err != nil {
+			return nil, err
+		}
+		return payload, nil
 	}
 
-	return errors.New("processor does not exist for given type")
+	return nil, errors.New("processor does not exist for given type")
 }
 
 func CreateMessage(senderID string, receiverID string, payload interceptor.Payload) (*interceptor.BaseMessage, error) {
@@ -192,6 +195,7 @@ func (payload *ChatDest) Type() interceptor.SubType {
 
 // ClientJoined is broadcast to room members when a new client joins
 type ClientJoined struct {
+	ClientID string    `json:"client_id"`
 	RoomID   string    `json:"room_id"`
 	JoinedAt time.Time `json:"joined_at"`
 }
@@ -221,8 +225,9 @@ func (payload *ClientJoined) Type() interceptor.SubType {
 
 // ClientLeft is broadcast to room members when a client leaves
 type ClientLeft struct {
-	RoomID string    `json:"room_id"`
-	LeftAt time.Time `json:"left_at"`
+	ClientID string    `json:"client_id"`
+	RoomID   string    `json:"room_id"`
+	LeftAt   time.Time `json:"left_at"`
 }
 
 func (payload *ClientLeft) Marshal() ([]byte, error) {
@@ -275,18 +280,15 @@ func (payload *Success) Type() interceptor.SubType {
 
 // Specific success message creators
 
-func JoinRoomSuccessMessage(clientID, roomID string) (*interceptor.BaseMessage, error) {
-	payload := &Success{SuccessMessage: "Joined room " + roomID + " successfully"}
-	return CreateMessage("server", clientID, payload)
+func JoinRoomSuccessMessage(roomID string) interceptor.Payload {
+	return &Success{SuccessMessage: "Joined room " + roomID + " successfully"}
 }
-func LeaveRoomSuccessMessage(clientID, roomID string) (*interceptor.BaseMessage, error) {
-	payload := &Success{SuccessMessage: "Left room " + roomID + " successfully"}
-	return CreateMessage("server", clientID, payload)
+func LeaveRoomSuccessMessage(roomID string) interceptor.Payload {
+	return &Success{SuccessMessage: "Left room " + roomID + " successfully"}
 }
 
-func ChatRoomSuccessMessage(clientID, messageID, roomID string) (*interceptor.BaseMessage, error) {
-	payload := &Success{SuccessMessage: "message " + messageID + " " + roomID + " successfully"}
-	return CreateMessage("server", clientID, payload)
+func ChatRoomSuccessMessage(messageID, roomID string) interceptor.Payload {
+	return &Success{SuccessMessage: "message " + messageID + " " + roomID + " successfully"}
 }
 
 type Error struct {
@@ -313,22 +315,18 @@ func (payload *Error) Type() interceptor.SubType {
 	return ErrorRoomSubType
 }
 
-func CreateRoomErrorMessage(clientID, roomID string) (*interceptor.BaseMessage, error) {
-	payload := &Error{ErrorMessage: "RoomMessage " + roomID + " created successfully"}
-	return CreateMessage("server", clientID, payload)
+func CreateRoomErrorMessage(roomID string) interceptor.Payload {
+	return &Error{ErrorMessage: "RoomMessage " + roomID + " created successfully"}
 }
 
-func JoinRoomErrorMessage(clientID, roomID string) (*interceptor.BaseMessage, error) {
-	payload := &Error{ErrorMessage: "Joined room " + roomID + " successfully"}
-	return CreateMessage("server", clientID, payload)
+func JoinRoomErrorMessage(roomID string) interceptor.Payload {
+	return &Error{ErrorMessage: "Joined room " + roomID + " successfully"}
 }
 
-func LeaveRoomErrorMessage(clientID, roomID string) (*interceptor.BaseMessage, error) {
-	payload := &Error{ErrorMessage: "Left room " + roomID + " successfully"}
-	return CreateMessage("server", clientID, payload)
+func LeaveRoomErrorMessage(roomID string) interceptor.Payload {
+	return &Error{ErrorMessage: "Left room " + roomID + " successfully"}
 }
 
-func ChatRoomErrorMessage(clientID, messageID, roomID string) (*interceptor.BaseMessage, error) {
-	payload := &Error{ErrorMessage: "message " + messageID + " " + roomID + " successfully"}
-	return CreateMessage("server", clientID, payload)
+func ChatRoomErrorMessage(messageID, roomID string) interceptor.Payload {
+	return &Error{ErrorMessage: "message " + messageID + " " + roomID + " successfully"}
 }
