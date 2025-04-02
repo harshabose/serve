@@ -8,6 +8,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
+	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
 type Interceptor struct {
@@ -30,7 +31,7 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 }
 
 func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
-	return interceptor.ReaderFunc(func(connection interceptor.Connection) (websocket.MessageType, interceptor.Message, error) {
+	return interceptor.ReaderFunc(func(connection interceptor.Connection) (websocket.MessageType, message.Message, error) {
 		messageType, data, err := reader.Read(connection)
 		if err != nil {
 			return messageType, data, err
@@ -44,15 +45,14 @@ func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) intercept
 		i.Mutex.Lock()
 		defer i.Mutex.Unlock()
 
+		payload, err := PayloadUnmarshal(msg.SubType, msg.Payload)
+		if err != nil {
+			return messageType, data, nil
+		}
+
 		if _, exists := i.states[connection]; exists {
-			payload, err := PayloadUnmarshal(msg.SubType, msg.Payload)
-			if err != nil {
-				fmt.Println("error while processing room message: ", err.Error())
-				return messageType, data, nil
-			}
 
 			if err := payload.Process(msg.Header, i, connection); err != nil {
-				fmt.Println("error while processing room message: ", err.Error())
 				return messageType, data, nil
 			}
 		}

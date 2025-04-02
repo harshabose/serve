@@ -1,37 +1,22 @@
 package interceptor
 
-import "encoding/json"
-
-type Message interface {
-	Marshal() ([]byte, error)
-	Unmarshal([]byte) error
-}
+import (
+	"github.com/harshabose/skyline_sonata/serve/pkg/message"
+)
 
 type (
-	Protocol string
 	SubType  string
 	MainType string
 )
 
 type Header struct {
-	SenderID   string   `json:"source_id"`
-	ReceiverID string   `json:"destination_id"`
-	Protocol   Protocol `json:"protocol"`
-	MainType   MainType `json:"main_type"`
-	SubType    SubType  `json:"sub_type"`
+	MainType MainType `json:"main_type"`
+	SubType  SubType  `json:"sub_type"`
 }
 
-var IProtocol Protocol = "interceptor"
+var IProtocol message.Protocol = "interceptor"
 
-type BaseMessage struct { // This actually needs to be interceptor module and Message interface should be in its own module
+type BaseMessage struct {
 	Header
-	Payload json.RawMessage `json:"payload"`
-}
-
-func (msg *BaseMessage) Marshal() ([]byte, error) {
-	return json.Marshal(msg)
-}
-
-func (msg *BaseMessage) Unmarshal(data []byte) error {
-	return json.Unmarshal(data, msg)
+	message.BaseMessage
 }

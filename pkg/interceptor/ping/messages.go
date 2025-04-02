@@ -2,29 +2,48 @@ package ping
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 )
 
-type Message struct {
-	interceptor.BaseMessage
+var (
+	MainType    interceptor.MainType = "ping-pong"
+	PingSubType interceptor.SubType  = "ping"
+	PongSubType interceptor.SubType  = "pong"
+
+	subTypeMap = map[interceptor.SubType]interceptor.Payload{
+		PingSubType: &Ping{},
+		PongSubType: &Pong{},
+	}
+)
+
+func PayloadUnmarshal(sub interceptor.SubType, p json.RawMessage) (interceptor.Payload, error) {
+	if payload, exists := subTypeMap[sub]; exists {
+		if err := payload.Unmarshal(p); err != nil {
+			return nil, err
+		}
+		return payload, nil
+	}
+
+	return nil, errors.New("processor does not exist for given type")
 }
 
-func CreateMessage(senderID, receiverID string, payload interceptor.Payload) (*Message, error) {
+func CreateMessage(senderID, receiverID string, payload interceptor.Payload) (*interceptor.BaseMessage, error) {
 	data, err := payload.Marshal()
 	if err != nil {
 		return nil, err
 	}
 
-	return &Message{
-		BaseMessage: interceptor.BaseMessage{
-			Header: interceptor.Header{
-				SenderID:   senderID,
-				ReceiverID: receiverID,
-			},
-			Payload: data,
+	return &interceptor.BaseMessage{
+		Header: interceptor.Header{
+			SenderID:   senderID,
+			ReceiverID: receiverID,
+			MainType:   MainType,
+			SubType:    payload.Type(),
 		},
+		Payload: data,
 	}, nil
 }
 
@@ -69,6 +88,10 @@ func (payload *Ping) Validate() error {
 	return nil
 }
 
+func (payload *Ping) Type() interceptor.SubType {
+	return PingSubType
+}
+
 // Pong represents a response to a ping message, confirming connection health.
 // It contains the original ping's message ID and timestamp, plus its own timestamp,
 // allowing the server to calculate the round-trip time.
@@ -109,4 +132,8 @@ func (payload *Pong) Unmarshal(data []byte) error {
 //   - An error if validation fails, nil otherwise
 func (payload *Pong) Validate() error {
 	return nil
+}
+
+func (payload *Pong) Type() interceptor.SubType {
+	return PongSubType
 }

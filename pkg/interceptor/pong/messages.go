@@ -2,12 +2,34 @@ package pong
 
 import (
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 )
 
-var MainType interceptor.MainType = "pong"
+var (
+	MainType interceptor.MainType = "ping-pong"
+
+	PingSubType interceptor.SubType = "ping"
+	PongSubType interceptor.SubType = "pong"
+
+	subTypeMap = map[interceptor.SubType]interceptor.Payload{
+		PingSubType: &Ping{},
+		PongSubType: &Pong{},
+	}
+)
+
+func PayloadUnmarshal(sub interceptor.SubType, p json.RawMessage) (interceptor.Payload, error) {
+	if payload, exists := subTypeMap[sub]; exists {
+		if err := payload.Unmarshal(p); err != nil {
+			return nil, err
+		}
+		return payload, nil
+	}
+
+	return nil, errors.New("processor does not exist for given type")
+}
 
 func CreateMessage(senderID, receiverID string, payload interceptor.Payload) (*interceptor.BaseMessage, error) {
 	data, err := payload.Marshal()

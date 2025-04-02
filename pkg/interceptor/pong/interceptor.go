@@ -9,6 +9,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
+	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
 type Interceptor struct {
@@ -43,17 +44,17 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 }
 
 func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) interceptor.Writer {
-	return interceptor.WriterFunc(func(conn interceptor.Connection, messageType websocket.MessageType, message interceptor.Message) error {
+	return interceptor.WriterFunc(func(conn interceptor.Connection, messageType websocket.MessageType, message message.Message) error {
 		i.Mutex.Lock()
 		defer i.Mutex.Unlock()
 
 		msg, ok := message.(*interceptor.BaseMessage)
-		if !ok || (msg.Header.Protocol != interceptor.IProtocol && msg.Header.MainType != MainType) {
+		if !ok || (msg.Protocol != interceptor.IProtocol && msg.Header.MainType != MainType) {
 			return writer.Write(conn, messageType, message)
 		}
 
-		payload := &Pong{}
-		if err := payload.Unmarshal(msg.Payload); err != nil {
+		payload, err := PayloadUnmarshal(msg.SubType, msg.Payload)
+		if err != nil {
 			return writer.Write(conn, messageType, message)
 		}
 
@@ -68,7 +69,7 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 }
 
 func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
-	return interceptor.ReaderFunc(func(conn interceptor.Connection) (messageType websocket.MessageType, message interceptor.Message, err error) {
+	return interceptor.ReaderFunc(func(conn interceptor.Connection) (messageType websocket.MessageType, message message.Message, err error) {
 		messageType, message, err = reader.Read(conn)
 		if err != nil {
 			return messageType, message, err
@@ -78,13 +79,13 @@ func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) intercept
 		defer i.Mutex.Unlock()
 
 		msg, ok := message.(*interceptor.BaseMessage)
-		if !ok || (msg.Header.Protocol != interceptor.IProtocol && msg.Header.MainType != MainType) {
+		if !ok || (msg.Protocol != interceptor.IProtocol && msg.Header.MainType != MainType) {
 			return messageType, message, nil
 		}
 
-		payload := &Ping{}
-		if err := payload.Unmarshal(msg.Payload); err != nil {
-			return messageType, message, nil
+		payload, err := PayloadUnmarshal(msg.SubType, msg.Payload)
+		if err != nil {
+			return messageType, message, err
 		}
 
 		if _, exists := i.states[conn]; exists {

@@ -4,40 +4,38 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
-	"encoding/binary"
-	"errors"
 	"io"
 	"sync"
+	"time"
 
+	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
 type encryptor interface {
-	Encrypt(message.Message) (*Message, error)
-	Decrypt(*Message) (message.Message, error)
+	Encrypt(message.Message) (*interceptor.BaseMessage, error)
+	Decrypt(*interceptor.BaseMessage) (message.Message, error)
 	Close() error
 }
 
 type aes256 struct {
+	key       []byte
 	encryptor cipher.AEAD
 	sessionID []byte
 	mux       sync.RWMutex
 }
 
 func createAES256() (*aes256, error) {
-	// generate key
 	key := make([]byte, 32)
 	if _, err := io.ReadFull(rand.Reader, key); err != nil {
 		return nil, err
 	}
 
-	// create cipher block
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, err
 	}
 
-	// create GCM mode encryptor
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
 		return nil, err
@@ -49,12 +47,13 @@ func createAES256() (*aes256, error) {
 	}
 
 	return &aes256{
+		key:       key,
 		encryptor: gcm,
 		sessionID: sessionID,
 	}, nil
 }
 
-func (a *aes256) Encrypt(message message.Message) (*Message, error) {
+func (a *aes256) Encrypt(senderID, receiverID string, message message.Message) (*interceptor.BaseMessage, error) {
 	nonce := make([]byte, 12)
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
@@ -69,19 +68,28 @@ func (a *aes256) Encrypt(message message.Message) (*Message, error) {
 	defer a.mux.Unlock()
 
 	encryptedData := a.encryptor.Seal(nil, nonce, data, a.sessionID)
-	finalData := make([]byte, 2+len(nonce)+len(encryptedData))
-	binary.BigEndian.PutUint16(finalData[:2], uint16(len(nonce)))
+	payload := &Encrypted{Data: encryptedData, Nonce: nonce, Timestamp: time.Now()}
 
-	copy(finalData[2:], nonce)
-	copy(finalData[2+len(nonce):], encryptedData)
-
-	return CreateMessage(PayloadEncryptedType, finalData), nil
+	return CreateMessage(senderID, receiverID, payload)
 }
 
-func (a *aes256) Decrypt(message *Message) (message.Message, error) {
+func (a *aes256) Decrypt(message *Encrypted) (message.Message, error) {
+	_, err := a.encryptor.Open(nil, message.Nonce, message.Data, a.sessionID)
+	if err != nil {
+		return nil, err
+	}
 
+	// TODO: figure out how to create a message here
+
+	return nil, nil
 }
 
 func (a *aes256) Close() error {
+	a.mux.Lock()
+	defer a.mux.Unlock()
 
+	a.sessionID = nil
+	a.encryptor = nil
+
+	return nil
 }
