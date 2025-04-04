@@ -69,45 +69,34 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 }
 
 func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
-	return interceptor.ReaderFunc(func(connection interceptor.Connection) (messageType websocket.MessageType, message message.Message, err error) {
+	return interceptor.ReaderFunc(func(connection interceptor.Connection) (websocket.MessageType, message.Message, error) {
 		i.mux.Lock()
 		defer i.mux.Unlock()
 
-		messageType, message, err = reader.Read(connection)
+		messageType, m, err := reader.Read(connection)
 		if err != nil {
-			return messageType, message, err
-		}
-
-		msg, ok := message.(*interceptor.BaseMessage)
-		if !ok || (msg.Protocol != interceptor.IProtocol && msg.MainType != MainType) {
-			return messageType, message, nil
-		}
-
-		payload, err := PayloadUnmarshal(msg.SubType, msg.Payload)
-		if err != nil {
-			return messageType, message, err
+			return messageType, m, err
 		}
 
 		state, exists := i.states[connection]
 		if !exists {
-			return messageType, message, nil
+			return messageType, m, nil
 		}
 
-		if err := payload.Process(msg.BaseMessage.Header, i, connection); err != nil {
-			fmt.Println("error while processing encryptor message:", err.Error())
+		payload := &Encrypted{}
+		if m.Message().Header.Protocol != payload.Protocol() {
+			return messageType, m, nil
 		}
 
-		p, ok := payload.(*Encrypted)
-		if !ok {
-			return messageType, message, nil
+		if err := payload.Unmarshal(m.Message().Payload); err != nil {
+			return messageType, m, nil
 		}
 
-		message, err = state.encryptor.Decrypt(p)
-		if err != nil {
-			return messageType, message, nil
+		if err := payload.Process(i, connection); err != nil {
+			fmt.Println("error while processing encryptor m:", err.Error())
 		}
 
-		return messageType, message, nil
+		return messageType, , nil
 	})
 }
 

@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
@@ -58,22 +57,41 @@ func (a *aes256) Encrypt(senderID, receiverID string, m message.Message) (*messa
 		return nil, err
 	}
 
-	a.mux.Lock()
-	defer a.mux.Unlock()
-
 	encryptedData := a.encryptor.Seal(nil, nonce, data, a.sessionID)
 
-	return message.CreateMessage(senderID, receiverID, NewEncrypt(senderID, receiverID, encryptedData, nonce))
-}
+	encryptedMsg := &Encrypted{
+		BaseMessage: message.BaseMessage{
+			Header: message.Header{
+				SenderID:   senderID,
+				ReceiverID: receiverID,
+				Protocol:   m.Protocol(),
+			},
+			Payload: encryptedData,
+		},
+		Nonce:     nonce,
+		Timestamp: time.Now(),
+	}
 
-func (a *aes256) Decrypt(message *Encrypted) (message.Message, error) {
-	a.mux.Lock()
-	defer a.mux.Unlock()
-
-	data, err := a.encryptor.Open(nil, message.Nonce, message.Data, a.sessionID)
+	msg, err := message.CreateMessage(senderID, receiverID, encryptedMsg)
 	if err != nil {
 		return nil, err
 	}
+
+	return msg, nil
+}
+
+func (a *aes256) Decrypt(m *Encrypted) (message.Message, error) {
+	a.mux.Lock()
+	defer a.mux.Unlock()
+
+	data, err := a.encryptor.Open(nil, m.Nonce, m.Payload, a.sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	m.Payload = data
+
+	msg := message.CreateMessageFromData(senderID, receiverID, m.Header.Protocol, data)
 
 	return nil, nil
 }

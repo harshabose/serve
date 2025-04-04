@@ -9,47 +9,24 @@ import (
 	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
-var (
-	MainType interceptor.MainType = "encrypt"
-
-	EncryptedSubType interceptor.SubType = "encrypted"
-
-	subTypeMap = map[interceptor.SubType]interceptor.Payload{
-		EncryptedSubType: &Encrypted{},
-	}
-)
-
-func PayloadUnmarshal(sub interceptor.SubType, p json.RawMessage) (interceptor.Payload, error) {
-	if payload, exists := subTypeMap[sub]; exists {
-		if err := payload.Unmarshal(p); err != nil {
-			return nil, err
-		}
-		return payload, nil
-	}
-
-	return nil, errors.New("processor does not exist for given type")
-}
-
 type Encrypted struct {
 	message.BaseMessage
-	Data      []byte    `json:"data"`
 	Nonce     []byte    `json:"nonce"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
 var Protocol message.Protocol = "encrypt"
 
-func NewEncrypt(senderID, receiverID string, data, nonce []byte) *Encrypted {
+func NewEncrypt(senderID, receiverID string, protocol message.Protocol, data json.RawMessage, nonce []byte) *Encrypted {
 	return &Encrypted{
 		BaseMessage: message.BaseMessage{
 			Header: message.Header{
 				SenderID:   senderID,
 				ReceiverID: receiverID,
-				Protocol:   message.NoneProtocol,
+				Protocol:   protocol,
 			},
-			Payload: nil,
+			Payload: data,
 		},
-		Data:      data,
 		Nonce:     nonce,
 		Timestamp: time.Now(),
 	}
@@ -74,7 +51,7 @@ func (payload *Encrypted) Process(_interceptor interceptor.Interceptor, connecti
 		return errors.New("connection not registered")
 	}
 
-	msg, err := state.encryptor.Decrypt(payload)
+	msg, err := state.encryptor.Decrypt(payload.Payload)
 	if err != nil {
 		return err
 	}

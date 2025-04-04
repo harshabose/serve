@@ -86,3 +86,14 @@ func CreateMessage(senderID, receiverID string, payload Message) (*BaseMessage, 
 		Payload: data,
 	}, nil
 }
+
+func CreateMessageFromData(senderID, receiverID string, protocol Protocol, payload json.RawMessage) *BaseMessage {
+	return &BaseMessage{
+		Header: Header{
+			SenderID:   senderID,
+			ReceiverID: receiverID,
+			Protocol:   protocol,
+		},
+		Payload: payload,
+	}
+}
