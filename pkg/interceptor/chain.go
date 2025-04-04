@@ -1,5 +1,11 @@
 package interceptor
 
+import (
+	"github.com/coder/websocket"
+
+	"github.com/harshabose/skyline_sonata/serve/pkg/message"
+)
+
 // Chain implements the Interceptor interface by combining multiple interceptors
 // into a sequential processing pipeline. Each interceptor in the chain gets a chance
 // to process the connection, reader, and writer in the order they were added.

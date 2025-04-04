@@ -13,53 +13,47 @@ import (
 )
 
 type encryptor interface {
-	Encrypt(message.Message) (*interceptor.BaseMessage, error)
-	Decrypt(*interceptor.BaseMessage) (message.Message, error)
+	SetKey(key []byte) error
+	Encrypt(string, string, message.Message) (*message.BaseMessage, error)
+	Decrypt(*Encrypted) (message.Message, error)
 	Close() error
 }
 
 type aes256 struct {
-	key       []byte
 	encryptor cipher.AEAD
 	sessionID []byte
 	mux       sync.RWMutex
 }
 
-func createAES256() (*aes256, error) {
-	key := make([]byte, 32)
-	if _, err := io.ReadFull(rand.Reader, key); err != nil {
-		return nil, err
-	}
-
+func (a *aes256) SetKey(key []byte) error {
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	gcm, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	sessionID := make([]byte, 16)
 	if _, err := io.ReadFull(rand.Reader, sessionID); err != nil {
-		return nil, err
+		return err
 	}
 
-	return &aes256{
-		key:       key,
-		encryptor: gcm,
-		sessionID: sessionID,
-	}, nil
+	a.encryptor = gcm
+	a.sessionID = sessionID
+
+	return nil
 }
 
-func (a *aes256) Encrypt(senderID, receiverID string, message message.Message) (*interceptor.BaseMessage, error) {
+func (a *aes256) Encrypt(senderID, receiverID string, m message.Message) (*message.BaseMessage, error) {
 	nonce := make([]byte, 12)
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
 	}
 
-	data, err := message.Marshal()
+	data, err := m.Marshal()
 	if err != nil {
 		return nil, err
 	}
@@ -68,18 +62,18 @@ func (a *aes256) Encrypt(senderID, receiverID string, message message.Message) (
 	defer a.mux.Unlock()
 
 	encryptedData := a.encryptor.Seal(nil, nonce, data, a.sessionID)
-	payload := &Encrypted{Data: encryptedData, Nonce: nonce, Timestamp: time.Now()}
 
-	return CreateMessage(senderID, receiverID, payload)
+	return message.CreateMessage(senderID, receiverID, NewEncrypt(senderID, receiverID, encryptedData, nonce))
 }
 
 func (a *aes256) Decrypt(message *Encrypted) (message.Message, error) {
-	_, err := a.encryptor.Open(nil, message.Nonce, message.Data, a.sessionID)
+	a.mux.Lock()
+	defer a.mux.Unlock()
+
+	data, err := a.encryptor.Open(nil, message.Nonce, message.Data, a.sessionID)
 	if err != nil {
 		return nil, err
 	}
-
-	// TODO: figure out how to create a message here
 
 	return nil, nil
 }

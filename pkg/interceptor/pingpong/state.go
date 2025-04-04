@@ -1,4 +1,4 @@
-package pong
+package pingpong
 
 import (
 	"context"
@@ -13,8 +13,9 @@ import (
 // the calculated round-trip time, and when it was received. This data is used
 // for connection health analysis and statistics.
 type pong struct {
-	messageid string    // Unique identifier matching the corresponding ping
-	timestamp time.Time // When this pong was received
+	messageid string        // Unique identifier matching the corresponding ping
+	rtt       time.Duration // Round-trip time (time between ping sent and pong received)
+	timestamp time.Time     // When this pong was received
 }
 
 // ping represents a single ping request record.
@@ -64,8 +65,11 @@ func (state *state) recordPong(payload *Pong) {
 	state.mux.Lock()
 	defer state.mux.Unlock()
 
+	rtt := payload.Timestamp.Sub(payload.PingTimestamp)
+
 	pong := &pong{
 		messageid: payload.MessageID,
+		rtt:       rtt,
 		timestamp: time.Now(),
 	}
 	state.recent.pong = pong
@@ -104,6 +108,89 @@ func (state *state) recordPing(payload *Ping) {
 	}
 	state.pings = append(state.pings, ping)
 	state.sent++
+}
+
+// GetRecentRTT returns the round-trip time from the most recent pong.
+// This provides the latest connection latency measurement without
+// needing to calculate an average across multiple samples.
+//
+// Returns:
+//   - The round-trip time of the most recent pong, or zero if none exists
+func (state *state) GetRecentRTT() time.Duration {
+	state.mux.RLock()
+	defer state.mux.RUnlock()
+
+	return state.recent.pong.rtt
+}
+
+// GetAverageRTT calculates the average round-trip time across all recorded pongs.
+// This provides a more stable measure of connection latency than individual
+// measurements, smoothing out temporary network fluctuations.
+//
+// Returns:
+//   - The average round-trip time, or zero if no pongs have been received
+func (state *state) GetAverageRTT() time.Duration {
+	state.mux.RLock()
+	defer state.mux.RUnlock()
+
+	if len(state.pongs) == 0 {
+		return 0
+	}
+
+	var total time.Duration
+	for _, stat := range state.pongs {
+		total += stat.rtt
+	}
+
+	return total / time.Duration(len(state.pongs))
+}
+
+// GetMaxRTT returns the maximum round-trip time observed across all recorded pongs.
+// This helps identify worst-case latency spikes that might affect application
+// performance or user experience.
+//
+// Returns:
+//   - The maximum round-trip time, or zero if no pongs have been received
+func (state *state) GetMaxRTT() time.Duration {
+	state.mux.RLock()
+	defer state.mux.RUnlock()
+
+	if len(state.pongs) == 0 {
+		return 0
+	}
+
+	var maxRTT time.Duration
+	for _, stat := range state.pongs {
+		if stat.rtt > maxRTT {
+			maxRTT = stat.rtt
+		}
+	}
+
+	return maxRTT
+}
+
+// GetMinRTT returns the minimum round-trip time observed across all recorded pongs.
+// This helps identify the best-case latency under optimal network conditions,
+// providing a baseline for connection performance.
+//
+// Returns:
+//   - The minimum round-trip time, or zero if no pongs have been received
+func (state *state) GetMinRTT() time.Duration {
+	state.mux.RLock()
+	defer state.mux.RUnlock()
+
+	if len(state.pongs) == 0 {
+		return 0
+	}
+
+	minRTT := state.pongs[0].rtt
+	for _, stat := range state.pongs {
+		if stat.rtt < minRTT {
+			minRTT = stat.rtt
+		}
+	}
+
+	return minRTT
 }
 
 // GetSuccessRate returns the percentage of pings that received corresponding pongs.

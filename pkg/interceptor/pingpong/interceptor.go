@@ -1,4 +1,4 @@
-package pong
+package pingpong
 
 import (
 	"context"
@@ -16,6 +16,8 @@ type Interceptor struct {
 	interceptor.NoOpInterceptor
 	states     map[interceptor.Connection]*state
 	maxHistory uint16
+	interval   time.Duration // Time between ping messages
+	ping       bool
 }
 
 func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) error {
@@ -24,13 +26,13 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 
 	_, exists := i.states[connection]
 	if exists {
-		return errors.New("owner already exists")
+		return errors.New("connection already exists")
 	}
 
 	ctx, cancel := context.WithCancel(i.Ctx)
 
 	i.states[connection] = &state{
-		peerid: "unknown", // unknown until first ping
+		peerid: "unknown", // unknown until first pong
 		writer: writer,    // full-stack writer (this is different from the writer in InterceptSocketWriter)
 		reader: reader,
 		pings:  make([]*ping, 0),
@@ -40,61 +42,59 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 		cancel: cancel,
 	}
 
+	if i.ping {
+		go i.loop(ctx, i.interval, connection)
+	}
+
 	return nil
 }
 
 func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) interceptor.Writer {
-	return interceptor.WriterFunc(func(conn interceptor.Connection, messageType websocket.MessageType, message message.Message) error {
+	return interceptor.WriterFunc(func(conn interceptor.Connection, messageType websocket.MessageType, m message.Message) error {
 		i.Mutex.Lock()
 		defer i.Mutex.Unlock()
 
-		msg, ok := message.(*interceptor.BaseMessage)
-		if !ok || (msg.Protocol != interceptor.IProtocol && msg.Header.MainType != MainType) {
-			return writer.Write(conn, messageType, message)
+		if _, exists := i.states[conn]; !exists {
+			return writer.Write(conn, messageType, m)
 		}
 
-		payload, err := PayloadUnmarshal(msg.SubType, msg.Payload)
+		payload, err := ProtocolUnmarshal(m.Message().Header.Protocol, m.Message().Payload)
 		if err != nil {
-			return writer.Write(conn, messageType, message)
+			return writer.Write(conn, messageType, m)
 		}
 
-		if _, exists := i.states[conn]; exists {
-			if err := payload.Process(msg.Header, i, conn); err != nil {
-				fmt.Println("error while processing ping pong message: ", err.Error())
-			}
+		if err := payload.Process(i, conn); err != nil {
+			return writer.Write(conn, messageType, m)
 		}
 
-		return writer.Write(conn, messageType, message)
+		return writer.Write(conn, messageType, m)
 	})
 }
 
 func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
-	return interceptor.ReaderFunc(func(conn interceptor.Connection) (messageType websocket.MessageType, message message.Message, err error) {
-		messageType, message, err = reader.Read(conn)
+	return interceptor.ReaderFunc(func(conn interceptor.Connection) (messageType websocket.MessageType, m message.Message, err error) {
+		messageType, m, err = reader.Read(conn)
 		if err != nil {
-			return messageType, message, err
+			return messageType, m, err
 		}
 
 		i.Mutex.Lock()
 		defer i.Mutex.Unlock()
 
-		msg, ok := message.(*interceptor.BaseMessage)
-		if !ok || (msg.Protocol != interceptor.IProtocol && msg.Header.MainType != MainType) {
-			return messageType, message, nil
+		if _, exists := i.states[conn]; !exists {
+			return messageType, m, nil
 		}
 
-		payload, err := PayloadUnmarshal(msg.SubType, msg.Payload)
+		payload, err := ProtocolUnmarshal(m.Message().Header.Protocol, m.Message().Payload)
 		if err != nil {
-			return messageType, message, err
+			return messageType, m, nil
 		}
 
-		if _, exists := i.states[conn]; exists {
-			if err := payload.Process(msg.Header, i, conn); err != nil {
-				fmt.Println("error while processing ping pong message: ", err.Error())
-			}
+		if err := payload.Process(i, conn); err != nil {
+			return messageType, m, nil
 		}
 
-		return messageType, message, nil
+		return messageType, m, nil
 	})
 }
 
@@ -130,44 +130,69 @@ func (i *Interceptor) Close() error {
 	return nil
 }
 
-func (payload *Ping) Process(header interceptor.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
-	if err := payload.Validate(); err != nil {
-		return err
+func (i *Interceptor) loop(ctx context.Context, interval time.Duration, connection interceptor.Connection) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			state, exists := i.states[connection]
+			if !exists {
+				fmt.Println("error while trying to send ping:", errors.New("connection does not exists").Error())
+				continue
+			}
+
+			msg, err := message.CreateMessage(i.ID, state.peerid, NewPing(i.ID, state.peerid))
+			if err != nil {
+				continue
+			}
+
+			if err := state.writer.Write(connection, websocket.MessageText, msg); err != nil {
+				fmt.Println("error while trying to send ping:", err.Error())
+				continue
+			}
+		}
 	}
-
-	i, ok := interceptor.(*Interceptor)
-	if !ok {
-		return errors.New("not appropriate interceptor to process this message")
-	}
-
-	i.Mutex.Lock()
-	defer i.Mutex.Unlock()
-
-	state, exists := i.states[connection]
-	if !exists {
-		return errors.New("connection does not exists")
-	}
-
-	state.peerid = header.SenderID
-	state.recordPing(payload)
-
-	msg, err := CreateMessage(i.ID, state.peerid, &Pong{MessageID: payload.MessageID, PingTimestamp: payload.Timestamp, Timestamp: time.Now()})
-	if err != nil {
-		return err
-	}
-
-	return state.writer.Write(connection, websocket.MessageText, msg)
 }
 
-func (payload *Pong) Process(_ interceptor.Header, interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *Ping) Process(interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
 
-	i, ok := interceptor.(*Interceptor)
-	if !ok {
-		return errors.New("not appropriate interceptor to process this message")
+	i := interceptor.(*Interceptor)
+
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
+
+	state, exists := i.states[connection]
+	if !exists {
+		return errors.New("connection does not exists")
 	}
+	state.peerid = payload.SenderID
+	state.recordPing(payload)
+
+	if !i.ping {
+		msg, err := message.CreateMessage(i.ID, state.peerid, NewPong(i.ID, payload))
+		if err != nil {
+			return err
+		}
+		return state.writer.Write(connection, websocket.MessageText, msg)
+	}
+
+	return nil
+
+}
+
+func (payload *Pong) Process(interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+	if err := payload.Validate(); err != nil {
+		return err
+	}
+
+	i := interceptor.(*Interceptor)
 
 	i.Mutex.Lock()
 	defer i.Mutex.Unlock()
@@ -177,6 +202,7 @@ func (payload *Pong) Process(_ interceptor.Header, interceptor interceptor.Inter
 		return errors.New("connection does not exists")
 	}
 
+	state.peerid = payload.SenderID
 	state.recordPong(payload)
 
 	return nil

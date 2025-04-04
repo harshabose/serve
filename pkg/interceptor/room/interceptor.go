@@ -92,7 +92,7 @@ func (i *Interceptor) Close() error {
 // ================================================================================================================== //
 // ================================================================================================================== //
 
-func (payload *CreateRoom) Process(header interceptor.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *CreateRoom) Process(header message.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
@@ -128,7 +128,7 @@ func (payload *CreateRoom) Process(header interceptor.Header, _interceptor inter
 	return nil
 }
 
-func (payload *JoinRoom) Process(header interceptor.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *JoinRoom) Process(header message.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
@@ -157,7 +157,7 @@ func (payload *JoinRoom) Process(header interceptor.Header, _interceptor interce
 	return r.add(connection, state)
 }
 
-func (payload *LeaveRoom) Process(header interceptor.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *LeaveRoom) Process(header message.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}
@@ -186,7 +186,7 @@ func (payload *LeaveRoom) Process(header interceptor.Header, _interceptor interc
 	return r.remove(connection)
 }
 
-func (payload *ChatSource) Process(header interceptor.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+func (payload *ChatSource) Process(header message.Header, _interceptor interceptor.Interceptor, connection interceptor.Connection) error {
 	if err := payload.Validate(); err != nil {
 		return err
 	}

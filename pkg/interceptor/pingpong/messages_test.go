@@ -1,4 +1,4 @@
-package ping
+package pingpong
 
 import (
 	_ "bytes"

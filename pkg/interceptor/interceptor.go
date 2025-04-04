@@ -189,23 +189,23 @@ func (interceptor *NoOpInterceptor) Close() error {
 	return nil
 }
 
-// Payload defines the interface for protocol message contents.
-// It extends the base message.Message interface with validation and processing
-// capabilities specific to the protocol. Each implementation represents
-// a different message type within the protocol.
+// // Payload defines the interface for protocol message contents.
+// // It extends the base message.Message interface with validation and processing
+// // capabilities specific to the protocol. Each implementation represents
+// // a different message type within the protocol.
+// //
+// // Implementations must be able to validate their own content and process
+// // themselves against their respective Interceptor when received.
+// type Payload interface {
+// 	Marshal() ([]byte, error)
 //
-// Implementations must be able to validate their own content and process
-// themselves against their respective Interceptor when received.
-type Payload interface {
-	Marshal() ([]byte, error)
-
-	Unmarshal([]byte) error
-	// Validate checks if the payload data is well-formed and valid
-	// according to the protocol requirements.
-	Validate() error
-	// Process handles the payload-specific logic when a message is received,
-	// updating the appropriate state in the manager for the given connection.
-	Process(Header, Interceptor, Connection) error
-
-	Type() SubType
-}
+// 	Unmarshal([]byte) error
+// 	// Validate checks if the payload data is well-formed and valid
+// 	// according to the protocol requirements.
+// 	Validate() error
+// 	// Process handles the payload-specific logic when a message is received,
+// 	// updating the appropriate state in the manager for the given connection.
+// 	Process(message.Header, Interceptor, Connection) error
+//
+// 	Type() SubType
+// }

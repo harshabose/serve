@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
+	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
 var (
@@ -185,7 +186,7 @@ func (payload *ChatDest) Validate() error {
 	return nil
 }
 
-func (payload *ChatDest) Process(_ interceptor.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
+func (payload *ChatDest) Process(_ message.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
 	return nil
 }
 
@@ -215,7 +216,7 @@ func (payload *ClientJoined) Validate() error {
 	return nil
 }
 
-func (payload *ClientJoined) Process(_ interceptor.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
+func (payload *ClientJoined) Process(_ message.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
 	return nil
 }
 
@@ -245,7 +246,7 @@ func (payload *ClientLeft) Validate() error {
 	return nil
 }
 
-func (payload *ClientLeft) Process(_ interceptor.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
+func (payload *ClientLeft) Process(_ message.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
 	return nil
 }
 
@@ -270,7 +271,7 @@ func (payload *Success) Validate() error {
 	return nil
 }
 
-func (payload *Success) Process(_ interceptor.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
+func (payload *Success) Process(_ message.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
 	return nil
 }
 
@@ -307,7 +308,7 @@ func (payload *Error) Validate() error {
 	return nil
 }
 
-func (payload *Error) Process(_ interceptor.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
+func (payload *Error) Process(_ message.Header, _ interceptor.Interceptor, _ interceptor.Connection) error {
 	return nil
 }
 

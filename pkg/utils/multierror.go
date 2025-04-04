@@ -17,17 +17,21 @@ func NewMultiError() *MultiError {
 }
 
 // Add appends an error to the collection if it's not nil
-func (multiErr *MultiError) Add(err error) {
+func (multiErr *MultiError) Add(err error) *MultiError {
 	if err != nil {
 		multiErr.errors = append(multiErr.errors, err)
 	}
+
+	return multiErr
 }
 
 // AddAll appends multiple errors to the collection, ignoring nil errors
-func (multiErr *MultiError) AddAll(errs ...error) {
+func (multiErr *MultiError) AddAll(errs ...error) *MultiError {
 	for _, err := range errs {
-		multiErr.Add(err)
+		_ = multiErr.Add(err)
 	}
+
+	return multiErr
 }
 
 // Len returns the number of errors in the collection
