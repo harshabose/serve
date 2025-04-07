@@ -8,13 +8,19 @@ import (
 	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
+var (
+	protocolMap = map[message.Protocol]message.Message{
+		ProtocolEncrypt: &Encrypted{},
+	}
+)
+
 type Encrypted struct {
 	message.BaseMessage
 	Nonce     []byte    `json:"nonce"`
 	Timestamp time.Time `json:"timestamp"`
 }
 
-var Protocol message.Protocol = "encrypt"
+var ProtocolEncrypt message.Protocol = "encrypt"
 
 func (payload *Encrypted) Validate() error {
 	if payload.Nonce == nil || len(payload.Nonce) <= 0 {
@@ -42,5 +48,8 @@ func (payload *Encrypted) Process(_interceptor interceptor.Interceptor, connecti
 }
 
 func (payload *Encrypted) Protocol() message.Protocol {
-	return Protocol
+	return ProtocolEncrypt
+}
+
+type KeyInit struct {
 }

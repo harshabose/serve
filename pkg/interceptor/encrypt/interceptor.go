@@ -12,6 +12,8 @@ import (
 	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
+var ServerPubKey []byte = nil
+
 type Interceptor struct {
 	interceptor.NoOpInterceptor
 	states map[interceptor.Connection]*state
@@ -64,12 +66,7 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 			return writer.Write(connection, messageType, m)
 		}
 
-		msg, err := message.CreateMessage(m.Message().SenderID, m.Message().ReceiverID, encrypted)
-		if err != nil {
-			return writer.Write(connection, messageType, m)
-		}
-
-		return writer.Write(connection, messageType, msg)
+		return writer.Write(connection, messageType, encrypted)
 	})
 }
 
