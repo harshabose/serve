@@ -1,7 +1,6 @@
 package encrypt
 
 import (
-	"encoding/json"
 	"errors"
 	"time"
 
@@ -17,23 +16,8 @@ type Encrypted struct {
 
 var Protocol message.Protocol = "encrypt"
 
-func NewEncrypt(senderID, receiverID string, protocol message.Protocol, data json.RawMessage, nonce []byte) *Encrypted {
-	return &Encrypted{
-		BaseMessage: message.BaseMessage{
-			Header: message.Header{
-				SenderID:   senderID,
-				ReceiverID: receiverID,
-				Protocol:   protocol,
-			},
-			Payload: data,
-		},
-		Nonce:     nonce,
-		Timestamp: time.Now(),
-	}
-}
-
 func (payload *Encrypted) Validate() error {
-	if payload.Data == nil || payload.Nonce == nil || len(payload.Data) <= 0 || len(payload.Nonce) <= 0 {
+	if payload.Nonce == nil || len(payload.Nonce) <= 0 {
 		return errors.New("not valid")
 	}
 
@@ -50,12 +34,11 @@ func (payload *Encrypted) Process(_interceptor interceptor.Interceptor, connecti
 	if !exists {
 		return errors.New("connection not registered")
 	}
-
-	msg, err := state.encryptor.Decrypt(payload.Payload)
-	if err != nil {
+	if err := state.encryptor.Decrypt(payload); err != nil {
 		return err
 	}
 
+	return nil
 }
 
 func (payload *Encrypted) Protocol() message.Protocol {

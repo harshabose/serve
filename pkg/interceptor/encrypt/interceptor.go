@@ -59,7 +59,12 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 			return writer.Write(connection, messageType, m)
 		}
 
-		msg, err := state.encryptor.Encrypt(m.Message().SenderID, m.Message().ReceiverID, m)
+		encrypted, err := state.encryptor.Encrypt(m.Message().SenderID, m.Message().ReceiverID, m)
+		if err != nil {
+			return writer.Write(connection, messageType, m)
+		}
+
+		msg, err := message.CreateMessage(m.Message().SenderID, m.Message().ReceiverID, encrypted)
 		if err != nil {
 			return writer.Write(connection, messageType, m)
 		}
@@ -96,7 +101,7 @@ func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) intercept
 			fmt.Println("error while processing encryptor m:", err.Error())
 		}
 
-		return messageType, , nil
+		return messageType, payload.Message(), nil
 	})
 }
 
@@ -125,4 +130,8 @@ func (i *Interceptor) Close() error {
 	i.states = make(map[interceptor.Connection]*state)
 
 	return nil
+}
+
+func (i *Interceptor) exchangeKeys() {
+
 }

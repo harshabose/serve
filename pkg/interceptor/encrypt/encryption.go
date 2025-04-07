@@ -13,8 +13,8 @@ import (
 
 type encryptor interface {
 	SetKey(key []byte) error
-	Encrypt(string, string, message.Message) (*message.BaseMessage, error)
-	Decrypt(*Encrypted) (message.Message, error)
+	Encrypt(string, string, message.Message) (*Encrypted, error)
+	Decrypt(*Encrypted) error
 	Close() error
 }
 
@@ -46,7 +46,7 @@ func (a *aes256) SetKey(key []byte) error {
 	return nil
 }
 
-func (a *aes256) Encrypt(senderID, receiverID string, m message.Message) (*message.BaseMessage, error) {
+func (a *aes256) Encrypt(senderID, receiverID string, m message.Message) (*Encrypted, error) {
 	nonce := make([]byte, 12)
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
@@ -72,28 +72,21 @@ func (a *aes256) Encrypt(senderID, receiverID string, m message.Message) (*messa
 		Timestamp: time.Now(),
 	}
 
-	msg, err := message.CreateMessage(senderID, receiverID, encryptedMsg)
-	if err != nil {
-		return nil, err
-	}
-
-	return msg, nil
+	return encryptedMsg, nil
 }
 
-func (a *aes256) Decrypt(m *Encrypted) (message.Message, error) {
+func (a *aes256) Decrypt(m *Encrypted) error {
 	a.mux.Lock()
 	defer a.mux.Unlock()
 
 	data, err := a.encryptor.Open(nil, m.Nonce, m.Payload, a.sessionID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	m.Payload = data
 
-	msg := message.CreateMessageFromData(senderID, receiverID, m.Header.Protocol, data)
-
-	return nil, nil
+	return nil
 }
 
 func (a *aes256) Close() error {
