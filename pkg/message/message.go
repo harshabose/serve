@@ -2,6 +2,7 @@ package message
 
 import (
 	"encoding/json"
+	"errors"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 )
@@ -9,6 +10,8 @@ import (
 type Protocol string
 
 var NoneProtocol Protocol = "none"
+
+type ProtocolRegistry map[Protocol]Message
 
 type Message interface {
 	Marshal() ([]byte, error)
@@ -96,4 +99,17 @@ func CreateMessageFromData(senderID, receiverID string, protocol Protocol, paylo
 		},
 		Payload: payload,
 	}
+}
+
+func ProtocolUnmarshal(registry ProtocolRegistry, protocol Protocol, data json.RawMessage) (Message, error) {
+	msg, exists := registry[protocol]
+	if !exists {
+		return nil, errors.New("protocol no match")
+	}
+
+	if err := msg.Unmarshal(data); err != nil {
+		return nil, err
+	}
+
+	return msg, nil
 }

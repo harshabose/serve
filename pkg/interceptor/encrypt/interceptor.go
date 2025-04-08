@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"sync"
 
 	"github.com/coder/websocket"
 	"golang.org/x/crypto/curve25519"
@@ -19,19 +18,33 @@ import (
 	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
+func IsZero[T comparable](value T) bool {
+	var zero T
+	return value == zero
+}
+
+type (
+	PrivateKey [32]byte
+	PublicKey  [32]byte
+	Salt       [16]byte
+	SessionID  [16]byte
+	Nonce      [12]byte
+	encryptKey [32]byte
+	decryptKey [32]byte
+)
+
 var ServerPubKey = []byte(os.Getenv("SERVER_ENCRYPT_PUB_KEY"))
 
 type Interceptor struct {
 	interceptor.NoOpInterceptor
-	states  map[interceptor.Connection]*state
-	signKey []byte
-	mux     sync.Mutex
-	ctx     context.Context
+	states    map[interceptor.Connection]*state
+	iamserver bool
+	signKey   []byte
 }
 
 func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) error {
-	i.mux.Lock()
-	defer i.mux.Unlock()
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
 
 	_, exists := i.states[connection]
 	if exists {
@@ -41,7 +54,7 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 	ctx, cancel := context.WithCancel(i.Ctx)
 
 	i.states[connection] = &state{
-		id:        "unknown",
+		peerID:    "unknown",
 		encryptor: &aes256{},
 		writer:    writer,
 		reader:    reader,
@@ -49,8 +62,9 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 		ctx:       ctx,
 	}
 
-	// TODO: Exchange keys with the peer using a key exchange protocol like Diffie-Hellman
-	// TODO: Store different keys for encryption and decryption
+	if i.iamserver {
+		return i.init(connection)
+	}
 
 	return nil
 }
@@ -61,44 +75,43 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 		message.Message should use message.BaseMessage to implement message.Message.
 	*/
 	return interceptor.WriterFunc(func(connection interceptor.Connection, messageType websocket.MessageType, m message.Message) error {
-		i.mux.Lock()
-		defer i.mux.Unlock()
+		i.Mutex.Lock()
+		defer i.Mutex.Unlock()
 
 		state, exists := i.states[connection]
 		if !exists {
 			return writer.Write(connection, messageType, m)
 		}
 
-		encrypted, err := state.encryptor.Encrypt(m.Message().SenderID, m.Message().ReceiverID, m)
-		if err != nil {
-			return writer.Write(connection, messageType, m)
+		if state.encryptor.Ready() {
+			encrypted, err := state.encryptor.Encrypt(m.Message().SenderID, m.Message().ReceiverID, m)
+			if err != nil {
+				return writer.Write(connection, messageType, m)
+			}
+			return writer.Write(connection, messageType, encrypted)
 		}
 
-		return writer.Write(connection, messageType, encrypted)
+		return writer.Write(connection, messageType, m)
 	})
 }
 
 func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
 	return interceptor.ReaderFunc(func(connection interceptor.Connection) (websocket.MessageType, message.Message, error) {
-		i.mux.Lock()
-		defer i.mux.Unlock()
+		i.Mutex.Lock()
+		defer i.Mutex.Unlock()
 
 		messageType, m, err := reader.Read(connection)
 		if err != nil {
 			return messageType, m, err
 		}
 
-		state, exists := i.states[connection]
+		_, exists := i.states[connection]
 		if !exists {
 			return messageType, m, nil
 		}
 
-		payload := &Encrypted{}
-		if m.Message().Header.Protocol != payload.Protocol() {
-			return messageType, m, nil
-		}
-
-		if err := payload.Unmarshal(m.Message().Payload); err != nil {
+		payload, err := message.ProtocolUnmarshal(protocolMap, m.Message().Header.Protocol, m.Message().Payload)
+		if err != nil {
 			return messageType, m, nil
 		}
 
@@ -111,8 +124,8 @@ func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) intercept
 }
 
 func (i *Interceptor) UnBindSocketConnection(connection interceptor.Connection) {
-	i.mux.Lock()
-	defer i.mux.Unlock()
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
 
 	state, exists := i.states[connection]
 	if !exists {
@@ -129,56 +142,56 @@ func (i *Interceptor) UnInterceptSocketWriter(_ interceptor.Writer) {}
 func (i *Interceptor) UnInterceptSocketReader(_ interceptor.Reader) {}
 
 func (i *Interceptor) Close() error {
-	i.mux.Lock()
-	defer i.mux.Unlock()
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
 
 	i.states = make(map[interceptor.Connection]*state)
 
 	return nil
 }
 
-func (i *Interceptor) exchangeKeys(connection interceptor.Connection) error {
-	var privKey [32]byte
-	var pubKey [32]byte
-
-	if _, err := io.ReadFull(rand.Reader, privKey[:]); err != nil {
-		return err
-	}
-
-	curve25519.ScalarBaseMult(&pubKey, &privKey)
-
-	salt := make([]byte, 16)
-
-	if _, err := io.ReadFull(rand.Reader, salt[:]); err != nil {
-		return err
-	}
-
-	signature := append(pubKey[:], salt...)
-	sign := ed25519.Sign(i.signKey, signature)
+func (i *Interceptor) init(connection interceptor.Connection) error {
+	var (
+		pubKey    PublicKey
+		sessionID SessionID
+	)
 
 	state, exists := i.states[connection]
 	if !exists {
 		return errors.New("connection not registered")
 	}
 
-	state.pubKey = pubKey[:]
-	state.privKey = privKey[:]
-	state.salt = salt
-
-	return state.writer.Write(connection, websocket.MessageText, CreateEncryptionInit(i.ID, state.peerID, pubKey[:], sign, salt))
-}
-
-func derive(shared, salt []byte, info string) (encKey, decKey []byte, err error) {
-	hkdfReader := hkdf.New(sha256.New, shared, salt, []byte(info))
-
-	encKey = make([]byte, 32)
-	if _, err := io.ReadFull(hkdfReader, encKey); err != nil {
-		return nil, nil, err
+	if _, err := io.ReadFull(rand.Reader, state.privKey[:]); err != nil {
+		return err
 	}
 
-	decKey = make([]byte, 32)
-	if _, err := io.ReadFull(hkdfReader, decKey); err != nil {
-		return nil, nil, err
+	curve25519.ScalarBaseMult((*[32]byte)(&pubKey), (*[32]byte)(&state.privKey))
+
+	if _, err := io.ReadFull(rand.Reader, state.salt[:]); err != nil {
+		return err
+	}
+
+	sign := ed25519.Sign(i.signKey, append(pubKey[:], state.salt[:]...))
+
+	if _, err := io.ReadFull(rand.Reader, sessionID[:]); err != nil {
+		return err
+	}
+	state.encryptor.SetSessionID(sessionID)
+
+	return state.writer.Write(connection, websocket.MessageText, NewInitMessage(i.ID, state.peerID, pubKey, sign, state.salt, sessionID))
+}
+
+func derive(shared []byte, salt Salt, info string) (encryptKey, decryptKey, error) {
+	hkdfReader := hkdf.New(sha256.New, shared, salt[:], []byte(info))
+
+	encKey := encryptKey{}
+	if _, err := io.ReadFull(hkdfReader, encKey[:]); err != nil {
+		return encryptKey{}, decryptKey{}, err
+	}
+
+	decKey := decryptKey{}
+	if _, err := io.ReadFull(hkdfReader, decKey[:]); err != nil {
+		return encryptKey{}, decryptKey{}, err
 	}
 
 	return encKey, decKey, nil

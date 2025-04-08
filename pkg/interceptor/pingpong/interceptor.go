@@ -58,7 +58,7 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 			return writer.Write(conn, messageType, m)
 		}
 
-		payload, err := ProtocolUnmarshal(m.Message().Header.Protocol, m.Message().Payload)
+		payload, err := message.ProtocolUnmarshal(protocolMap, m.Message().Header.Protocol, m.Message().Payload)
 		if err != nil {
 			return writer.Write(conn, messageType, m)
 		}
@@ -85,7 +85,7 @@ func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) intercept
 			return messageType, m, nil
 		}
 
-		payload, err := ProtocolUnmarshal(m.Message().Header.Protocol, m.Message().Payload)
+		payload, err := message.ProtocolUnmarshal(protocolMap, m.Message().Header.Protocol, m.Message().Payload)
 		if err != nil {
 			return messageType, m, nil
 		}

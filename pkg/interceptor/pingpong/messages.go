@@ -1,8 +1,6 @@
 package pingpong
 
 import (
-	"encoding/json"
-	"errors"
 	"time"
 
 	"github.com/google/uuid"
@@ -16,19 +14,6 @@ var (
 		ProtocolPong: &Pong{},
 	}
 )
-
-func ProtocolUnmarshal(protocol message.Protocol, data json.RawMessage) (message.Message, error) {
-	msg, exists := protocolMap[protocol]
-	if !exists {
-		return nil, errors.New("protocol no match")
-	}
-
-	if err := msg.Unmarshal(data); err != nil {
-		return nil, err
-	}
-
-	return msg, nil
-}
 
 // Ping represents a connection health check message sent by the server.
 // Each ping contains a unique message ID and a timestamp that can be used

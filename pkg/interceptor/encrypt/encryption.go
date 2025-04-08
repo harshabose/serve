@@ -12,22 +12,27 @@ import (
 )
 
 type encryptor interface {
-	SetKey(encKey, decKey, sessionID []byte) error
-	Encrypt(string, string, message.Message) (*Encrypted, error)
-	Decrypt(*Encrypted) error
+	SetKeys(encKey encryptKey, decKey decryptKey) error
+	SetSessionID(id SessionID)
+	Encrypt(string, string, message.Message) (*EncryptedMessage, error)
+	Decrypt(*EncryptedMessage) error
+	Ready() bool
 	Close() error
 }
 
 type aes256 struct {
 	encryptor cipher.AEAD
 	decryptor cipher.AEAD
-	sessionID []byte
+	sessionID SessionID
 	mux       sync.RWMutex
 }
 
-func (a *aes256) SetKey(encKey, decKey, sessionID []byte) error {
+func (a *aes256) SetKeys(encKey encryptKey, decKey decryptKey) error {
+	a.mux.Lock()
+	defer a.mux.Unlock()
+
 	{
-		block, err := aes.NewCipher(encKey)
+		block, err := aes.NewCipher(encKey[:])
 		if err != nil {
 			return err
 		}
@@ -40,7 +45,7 @@ func (a *aes256) SetKey(encKey, decKey, sessionID []byte) error {
 		a.encryptor = gcm
 	}
 	{
-		block, err := aes.NewCipher(decKey)
+		block, err := aes.NewCipher(decKey[:])
 		if err != nil {
 			return err
 		}
@@ -52,12 +57,18 @@ func (a *aes256) SetKey(encKey, decKey, sessionID []byte) error {
 
 		a.decryptor = gcm
 	}
-	a.sessionID = sessionID
 
 	return nil
 }
 
-func (a *aes256) Encrypt(senderID, receiverID string, m message.Message) (*Encrypted, error) {
+func (a *aes256) SetSessionID(id SessionID) {
+	a.mux.Lock()
+	defer a.mux.Unlock()
+
+	a.sessionID = id
+}
+
+func (a *aes256) Encrypt(senderID, receiverID string, m message.Message) (*EncryptedMessage, error) {
 	nonce := make([]byte, 12)
 	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
 		return nil, err
@@ -68,9 +79,9 @@ func (a *aes256) Encrypt(senderID, receiverID string, m message.Message) (*Encry
 		return nil, err
 	}
 
-	encryptedData := a.encryptor.Seal(nil, nonce, data, a.sessionID)
+	encryptedData := a.encryptor.Seal(nil, nonce, data, a.sessionID[:])
 
-	encryptedMsg := &Encrypted{
+	encryptedMsg := &EncryptedMessage{
 		BaseMessage: message.BaseMessage{
 			Header: message.Header{
 				SenderID:   senderID,
@@ -86,11 +97,11 @@ func (a *aes256) Encrypt(senderID, receiverID string, m message.Message) (*Encry
 	return encryptedMsg, nil
 }
 
-func (a *aes256) Decrypt(m *Encrypted) error {
+func (a *aes256) Decrypt(m *EncryptedMessage) error {
 	a.mux.Lock()
 	defer a.mux.Unlock()
 
-	data, err := a.decryptor.Open(nil, m.Nonce, m.Payload, a.sessionID)
+	data, err := a.decryptor.Open(nil, m.Nonce, m.Payload, a.sessionID[:])
 	if err != nil {
 		return err
 	}
@@ -100,12 +111,24 @@ func (a *aes256) Decrypt(m *Encrypted) error {
 	return nil
 }
 
+func (a *aes256) Ready() bool {
+	a.mux.RLock()
+	defer a.mux.RUnlock()
+
+	if a.encryptor != nil && a.decryptor != nil && !IsZero(a.sessionID) {
+		return true
+	}
+
+	return false
+}
+
 func (a *aes256) Close() error {
 	a.mux.Lock()
 	defer a.mux.Unlock()
 
-	a.sessionID = nil
+	a.sessionID = SessionID{}
 	a.encryptor = nil
+	a.decryptor = nil
 
 	return nil
 }

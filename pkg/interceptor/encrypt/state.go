@@ -11,11 +11,9 @@ type stats struct {
 
 type state struct {
 	stats
-	privKey   []byte
-	pubKey    []byte
-	salt      []byte
-	sessionID []byte
 	peerID    string
+	privKey   PrivateKey // THIS private key (not the peers')
+	salt      Salt
 	encryptor encryptor
 	writer    interceptor.Writer
 	reader    interceptor.Reader
