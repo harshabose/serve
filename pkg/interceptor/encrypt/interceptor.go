@@ -2,23 +2,31 @@ package encrypt
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"sync"
 
 	"github.com/coder/websocket"
+	"golang.org/x/crypto/curve25519"
+	"golang.org/x/crypto/ed25519"
+	"golang.org/x/crypto/hkdf"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
-var ServerPubKey []byte = nil
+var ServerPubKey = []byte(os.Getenv("SERVER_ENCRYPT_PUB_KEY"))
 
 type Interceptor struct {
 	interceptor.NoOpInterceptor
-	states map[interceptor.Connection]*state
-	mux    sync.Mutex
-	ctx    context.Context
+	states  map[interceptor.Connection]*state
+	signKey []byte
+	mux     sync.Mutex
+	ctx     context.Context
 }
 
 func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) error {
@@ -129,6 +137,49 @@ func (i *Interceptor) Close() error {
 	return nil
 }
 
-func (i *Interceptor) exchangeKeys() {
+func (i *Interceptor) exchangeKeys(connection interceptor.Connection) error {
+	var privKey [32]byte
+	var pubKey [32]byte
 
+	if _, err := io.ReadFull(rand.Reader, privKey[:]); err != nil {
+		return err
+	}
+
+	curve25519.ScalarBaseMult(&pubKey, &privKey)
+
+	salt := make([]byte, 16)
+
+	if _, err := io.ReadFull(rand.Reader, salt[:]); err != nil {
+		return err
+	}
+
+	signature := append(pubKey[:], salt...)
+	sign := ed25519.Sign(i.signKey, signature)
+
+	state, exists := i.states[connection]
+	if !exists {
+		return errors.New("connection not registered")
+	}
+
+	state.pubKey = pubKey[:]
+	state.privKey = privKey[:]
+	state.salt = salt
+
+	return state.writer.Write(connection, websocket.MessageText, CreateEncryptionInit(i.ID, state.peerID, pubKey[:], sign, salt))
+}
+
+func derive(shared, salt []byte, info string) (encKey, decKey []byte, err error) {
+	hkdfReader := hkdf.New(sha256.New, shared, salt, []byte(info))
+
+	encKey = make([]byte, 32)
+	if _, err := io.ReadFull(hkdfReader, encKey); err != nil {
+		return nil, nil, err
+	}
+
+	decKey = make([]byte, 32)
+	if _, err := io.ReadFull(hkdfReader, decKey); err != nil {
+		return nil, nil, err
+	}
+
+	return encKey, decKey, nil
 }

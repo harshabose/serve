@@ -12,7 +12,7 @@ import (
 )
 
 type encryptor interface {
-	SetKey(key []byte) error
+	SetKey(encKey, decKey, sessionID []byte) error
 	Encrypt(string, string, message.Message) (*Encrypted, error)
 	Decrypt(*Encrypted) error
 	Close() error
@@ -20,27 +20,38 @@ type encryptor interface {
 
 type aes256 struct {
 	encryptor cipher.AEAD
+	decryptor cipher.AEAD
 	sessionID []byte
 	mux       sync.RWMutex
 }
 
-func (a *aes256) SetKey(key []byte) error {
-	block, err := aes.NewCipher(key)
-	if err != nil {
-		return err
-	}
+func (a *aes256) SetKey(encKey, decKey, sessionID []byte) error {
+	{
+		block, err := aes.NewCipher(encKey)
+		if err != nil {
+			return err
+		}
 
-	gcm, err := cipher.NewGCM(block)
-	if err != nil {
-		return err
-	}
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return err
+		}
 
-	sessionID := make([]byte, 16)
-	if _, err := io.ReadFull(rand.Reader, sessionID); err != nil {
-		return err
+		a.encryptor = gcm
 	}
+	{
+		block, err := aes.NewCipher(decKey)
+		if err != nil {
+			return err
+		}
 
-	a.encryptor = gcm
+		gcm, err := cipher.NewGCM(block)
+		if err != nil {
+			return err
+		}
+
+		a.decryptor = gcm
+	}
 	a.sessionID = sessionID
 
 	return nil
@@ -79,7 +90,7 @@ func (a *aes256) Decrypt(m *Encrypted) error {
 	a.mux.Lock()
 	defer a.mux.Unlock()
 
-	data, err := a.encryptor.Open(nil, m.Nonce, m.Payload, a.sessionID)
+	data, err := a.decryptor.Open(nil, m.Nonce, m.Payload, a.sessionID)
 	if err != nil {
 		return err
 	}
