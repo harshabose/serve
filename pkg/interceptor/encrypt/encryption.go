@@ -12,7 +12,7 @@ import (
 )
 
 type encryptor interface {
-	SetKeys(encKey encryptKey, decKey decryptKey) error
+	SetKeys(key, key) error
 	SetSessionID(id SessionID)
 	Encrypt(string, string, message.Message) (*EncryptedMessage, error)
 	Decrypt(*EncryptedMessage) error
@@ -27,7 +27,7 @@ type aes256 struct {
 	mux       sync.RWMutex
 }
 
-func (a *aes256) SetKeys(encKey encryptKey, decKey decryptKey) error {
+func (a *aes256) SetKeys(encKey key, decKey key) error {
 	a.mux.Lock()
 	defer a.mux.Unlock()
 

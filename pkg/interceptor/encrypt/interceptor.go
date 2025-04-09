@@ -29,8 +29,7 @@ type (
 	Salt       [16]byte
 	SessionID  [16]byte
 	Nonce      [12]byte
-	encryptKey [32]byte
-	decryptKey [32]byte
+	key        [32]byte
 )
 
 var ServerPubKey = []byte(os.Getenv("SERVER_ENCRYPT_PUB_KEY"))
@@ -181,18 +180,18 @@ func (i *Interceptor) init(connection interceptor.Connection) error {
 	return state.writer.Write(connection, websocket.MessageText, NewInitMessage(i.ID, state.peerID, pubKey, sign, state.salt, sessionID))
 }
 
-func derive(shared []byte, salt Salt, info string) (encryptKey, decryptKey, error) {
+func derive(shared []byte, salt Salt, info string) (key, key, error) {
 	hkdfReader := hkdf.New(sha256.New, shared, salt[:], []byte(info))
 
-	encKey := encryptKey{}
-	if _, err := io.ReadFull(hkdfReader, encKey[:]); err != nil {
-		return encryptKey{}, decryptKey{}, err
+	key1 := key{}
+	if _, err := io.ReadFull(hkdfReader, key1[:]); err != nil {
+		return key{}, key{}, err
 	}
 
-	decKey := decryptKey{}
-	if _, err := io.ReadFull(hkdfReader, decKey[:]); err != nil {
-		return encryptKey{}, decryptKey{}, err
+	key2 := key{}
+	if _, err := io.ReadFull(hkdfReader, key2[:]); err != nil {
+		return key{}, key{}, err
 	}
 
-	return encKey, decKey, nil
+	return key1, key2, nil
 }

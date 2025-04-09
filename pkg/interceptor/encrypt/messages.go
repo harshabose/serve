@@ -179,7 +179,7 @@ func (payload *InitResponse) Process(_interceptor interceptor.Interceptor, conne
 		return err
 	}
 
-	encKey, decKey, err := derive(shared, state.salt, i.ID)
+	decKey, encKey, err := derive(shared, state.salt, i.ID)
 	if err != nil {
 		return err
 	}
@@ -189,7 +189,8 @@ func (payload *InitResponse) Process(_interceptor interceptor.Interceptor, conne
 
 type UpdateSession struct {
 	message.BaseMessage
-	SessionID SessionID `json:"session_id"`
+	SessionID   SessionID `json:"session_id"`
+	UpdateAtSeq uint64    `json:"update_at_seq"`
 }
 
 var ProtocolUpdateSession message.Protocol = "encrypt-update-session"
