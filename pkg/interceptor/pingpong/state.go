@@ -194,7 +194,7 @@ func (state *state) GetMinRTT() time.Duration {
 }
 
 // GetSuccessRate returns the percentage of pings that received corresponding pongs.
-// This metric helps assess connection reliability by measuring how many ping
+// This metric helps assess connection reliability by measuring how many iamserver
 // requests are successfully acknowledged by the client.
 //
 // Returns:

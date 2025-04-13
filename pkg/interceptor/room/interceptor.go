@@ -17,17 +17,17 @@ type Interceptor struct {
 	states map[interceptor.Connection]*state
 }
 
-func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) error {
+func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) (interceptor.Writer, interceptor.Reader, error) {
 	i.Mutex.Lock()
 	defer i.Mutex.Unlock()
 
 	if _, exists := i.states[connection]; exists {
-		return errors.New("connection already exists")
+		return nil, nil, errors.New("connection already exists")
 	}
 
 	i.states[connection] = &state{id: "unknown", writer: writer, reader: reader}
 
-	return nil
+	return writer, reader, nil
 }
 
 func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {

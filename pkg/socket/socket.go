@@ -11,6 +11,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
+	"github.com/harshabose/skyline_sonata/serve/pkg/message"
 )
 
 type API struct {
@@ -89,7 +90,7 @@ type Socket struct {
 func (socket *Socket) setup() *Socket {
 	socket.router = http.NewServeMux()
 	socket.server = &http.Server{}
-	// socket.handlerFunc = socket.wssHandler
+	socket.handlerFunc = socket.baseHandler
 
 	socket.settings.apply(socket)
 
@@ -118,8 +119,14 @@ func (socket *Socket) baseHandler(w http.ResponseWriter, r *http.Request) {
 		fmt.Println(errors.New("error while accepting socket connection"))
 	}
 
-	if err := socket.interceptor.BindSocketConnection(connection, socket, socket); err != nil {
+	if _, _, err := socket.interceptor.BindSocketConnection(connection, socket, socket); err != nil {
 		fmt.Println("error while handling client:", err.Error())
+		return
+	}
+
+	// READ MESSAGE LOOP HERE
+
+	if err := socket.interceptor.Init(connection); err != nil {
 		return
 	}
 }
@@ -128,7 +135,7 @@ func (socket *Socket) close() {
 
 }
 
-func (socket *Socket) Write(connection interceptor.Connection, messageType websocket.MessageType, message interceptor.Message) error {
+func (socket *Socket) Write(connection interceptor.Connection, messageType websocket.MessageType, message message.Message) error {
 	ctx, cancel := context.WithTimeout(socket.ctx, 100*time.Millisecond)
 	defer cancel()
 
@@ -140,7 +147,7 @@ func (socket *Socket) Write(connection interceptor.Connection, messageType webso
 	return connection.Write(ctx, messageType, data)
 }
 
-func (socket *Socket) Read(connection interceptor.Connection) (websocket.MessageType, interceptor.Message, error) {
+func (socket *Socket) Read(connection interceptor.Connection) (websocket.MessageType, message.Message, error) {
 	ctx, cancel := context.WithTimeout(socket.ctx, 100*time.Millisecond)
 	defer cancel()
 
@@ -149,7 +156,7 @@ func (socket *Socket) Read(connection interceptor.Connection) (websocket.Message
 		return websocket.MessageText, nil, err
 	}
 
-	msg := &interceptor.BaseMessage{}
+	msg := &message.BaseMessage{}
 	if err := msg.Unmarshal(data); err != nil {
 		return websocket.MessageText, nil, err
 	}

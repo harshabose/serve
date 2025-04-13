@@ -1,11 +1,5 @@
 package interceptor
 
-import (
-	"github.com/coder/websocket"
-
-	"github.com/harshabose/skyline_sonata/serve/pkg/message"
-)
-
 // Chain implements the Interceptor interface by combining multiple interceptors
 // into a sequential processing pipeline. Each interceptor in the chain gets a chance
 // to process the connection, reader, and writer in the order they were added.
@@ -40,12 +34,29 @@ func CreateChain(interceptors []Interceptor) *Chain {
 //
 // Returns:
 //   - Error if any interceptor fails to bind
-func (chain *Chain) BindSocketConnection(connection Connection, writer Writer, reader Reader) error {
+func (chain *Chain) BindSocketConnection(connection Connection, writer Writer, reader Reader) (Writer, Reader, error) {
+	var (
+		w   Writer
+		r   Reader
+		err error
+	)
+
 	for _, interceptor := range chain.interceptors {
-		if err := interceptor.BindSocketConnection(connection, chain.InterceptSocketWriter(writer), chain.InterceptSocketReader(reader)); err != nil {
+		if w, r, err = interceptor.BindSocketConnection(connection, chain.InterceptSocketWriter(writer), chain.InterceptSocketReader(reader)); err != nil {
+			return nil, nil, err
+		}
+	}
+
+	return w, r, nil
+}
+
+func (chain *Chain) Init(connection Connection) error {
+	for _, interceptor := range chain.interceptors {
+		if err := interceptor.Init(connection); err != nil {
 			return err
 		}
 	}
+
 	return nil
 }
 

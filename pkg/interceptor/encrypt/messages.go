@@ -106,9 +106,12 @@ func (payload *Init) Process(_interceptor interceptor.Interceptor, connection in
 	}
 
 	signature := append(payload.PublicKey[:], payload.Salt[:]...)
-	if ok := ed25519.Verify(ServerPubKey, signature, payload.Signature); !ok {
+	if ok := ed25519.Verify(SeverPublicKey, signature, payload.Signature); !ok {
 		return errors.New("signature did not match")
 	}
+
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
 
 	state, exists := i.states[connection]
 	if !exists {
@@ -145,6 +148,7 @@ func (payload *Init) Process(_interceptor interceptor.Interceptor, connection in
 type InitResponse struct {
 	message.BaseMessage
 	PublicKey PublicKey `json:"public_key"`
+	// NOTE: NO SIGNING HERE. AUTH IS DONE SEPARATELY
 }
 
 var ProtocolResponse message.Protocol = "encrypt-response"
@@ -169,22 +173,75 @@ func (payload *InitResponse) Process(_interceptor interceptor.Interceptor, conne
 		return errors.New("invalid interceptor")
 	}
 
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
+
 	state, exists := i.states[connection]
 	if !exists {
 		return errors.New("connection not registered")
 	}
+
+	state.peerID = payload.SenderID
 
 	shared, err := curve25519.X25519(state.privKey[:], payload.PublicKey[:])
 	if err != nil {
 		return err
 	}
 
-	decKey, encKey, err := derive(shared, state.salt, i.ID)
+	decKey, encKey, err := derive(shared, state.salt, i.ID) // NOTE: KEY REVERSED
 	if err != nil {
 		return err
 	}
 
-	return state.encryptor.SetKeys(encKey, decKey)
+	if err := state.encryptor.SetKeys(encKey, decKey); err != nil {
+		return err
+	}
+
+	state.initDone <- struct{}{}
+
+	return state.writer.Write(connection, websocket.MessageText, NewInitDoneMessage(i.ID, state.peerID))
+}
+
+type InitDone struct {
+	message.BaseMessage
+}
+
+var ProtocolInitDone message.Protocol = "encrypt-done"
+
+func NewInitDoneMessage(senderID, receiverID string) *InitDone {
+	return &InitDone{
+		BaseMessage: message.BaseMessage{
+			Header: message.Header{
+				SenderID:   senderID,
+				ReceiverID: receiverID,
+				Protocol:   message.NoneProtocol,
+			},
+			Payload: nil,
+		},
+	}
+}
+
+func (payload *InitDone) Protocol() message.Protocol {
+	return ProtocolInitDone
+}
+
+func (payload *InitDone) Process(_interceptor interceptor.Interceptor, connection interceptor.Connection) error {
+	i, ok := _interceptor.(*Interceptor)
+	if !ok {
+		return errors.New("invalid interceptor")
+	}
+
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
+
+	state, exists := i.states[connection]
+	if !exists {
+		return errors.New("connection not registered")
+	}
+
+	state.initDone <- struct{}{}
+
+	return nil
 }
 
 type UpdateSession struct {
@@ -201,12 +258,16 @@ func (payload *UpdateSession) Process(_interceptor interceptor.Interceptor, conn
 		return errors.New("invalid interceptor")
 	}
 
-	state, exists := i.states[connection]
-	if !exists {
-		return errors.New("connection not registered")
+	if !i.iamserver {
+		state, exists := i.states[connection]
+		if !exists {
+			return errors.New("connection not registered")
+		}
+
+		state.encryptor.SetSessionID(payload.SessionID)
+
+		return nil
 	}
 
-	state.encryptor.SetSessionID(payload.SessionID)
-
-	return nil
+	return errors.New("invalid request to server")
 }

@@ -67,7 +67,9 @@ type Interceptor interface {
 	// state or perform initialization tasks for the given connection, writer, and reader.
 	// Returns an error if the binding process fails, which typically would
 	// result in the connection being rejected.
-	BindSocketConnection(Connection, Writer, Reader) error
+	BindSocketConnection(Connection, Writer, Reader) (Writer, Reader, error)
+
+	Init(Connection) error
 
 	// InterceptSocketWriter wraps a writer that handles messages going out to clients.
 	// The interceptor receives the original writer and returns a modified writer
@@ -155,7 +157,11 @@ type NoOpInterceptor struct {
 // BindSocketConnection is a no-op implementation that accepts any connection.
 // Along with the connection, it also receives the writer and reader that will
 // be used with this connection, though the base implementation doesn't use them.
-func (interceptor *NoOpInterceptor) BindSocketConnection(_ Connection, _ Writer, _ Reader) error {
+func (interceptor *NoOpInterceptor) BindSocketConnection(_ Connection, _ Writer, _ Reader) (Writer, Reader, error) {
+	return nil, nil, nil
+}
+
+func (interceptor *NoOpInterceptor) Init(_ Connection) error {
 	return nil
 }
 

@@ -4,6 +4,7 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/rand"
+	"errors"
 	"io"
 	"sync"
 	"time"
@@ -69,46 +70,54 @@ func (a *aes256) SetSessionID(id SessionID) {
 }
 
 func (a *aes256) Encrypt(senderID, receiverID string, m message.Message) (*EncryptedMessage, error) {
-	nonce := make([]byte, 12)
-	if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-		return nil, err
-	}
+	if a.Ready() {
+		nonce := make([]byte, 12)
+		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+			return nil, err
+		}
 
-	data, err := m.Marshal()
-	if err != nil {
-		return nil, err
-	}
+		data, err := m.Marshal()
+		if err != nil {
+			return nil, err
+		}
 
-	encryptedData := a.encryptor.Seal(nil, nonce, data, a.sessionID[:])
+		encryptedData := a.encryptor.Seal(nil, nonce, data, a.sessionID[:])
 
-	encryptedMsg := &EncryptedMessage{
-		BaseMessage: message.BaseMessage{
-			Header: message.Header{
-				SenderID:   senderID,
-				ReceiverID: receiverID,
-				Protocol:   m.Protocol(),
+		encryptedMsg := &EncryptedMessage{
+			BaseMessage: message.BaseMessage{
+				Header: message.Header{
+					SenderID:   senderID,
+					ReceiverID: receiverID,
+					Protocol:   m.Protocol(),
+				},
+				Payload: encryptedData,
 			},
-			Payload: encryptedData,
-		},
-		Nonce:     nonce,
-		Timestamp: time.Now(),
+			Nonce:     nonce,
+			Timestamp: time.Now(),
+		}
+
+		return encryptedMsg, nil
 	}
 
-	return encryptedMsg, nil
+	return nil, errors.New("encryption-decryption not ready")
 }
 
 func (a *aes256) Decrypt(m *EncryptedMessage) error {
-	a.mux.Lock()
-	defer a.mux.Unlock()
+	if a.Ready() {
+		a.mux.Lock()
+		defer a.mux.Unlock()
 
-	data, err := a.decryptor.Open(nil, m.Nonce, m.Payload, a.sessionID[:])
-	if err != nil {
-		return err
+		data, err := a.decryptor.Open(nil, m.Nonce, m.Payload, a.sessionID[:])
+		if err != nil {
+			return err
+		}
+
+		m.Payload = data
+
+		return nil
 	}
 
-	m.Payload = data
-
-	return nil
+	return errors.New("encryption-decryption not ready")
 }
 
 func (a *aes256) Ready() bool {

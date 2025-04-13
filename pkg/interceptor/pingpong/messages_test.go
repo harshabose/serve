@@ -14,7 +14,7 @@ import (
 func TestPing_MarshalUnmarshal(t *testing.T) {
 	now := time.Now()
 	ping := &Ping{
-		MessageID: "test-ping-123",
+		MessageID: "test-iamserver-123",
 		Timestamp: now,
 	}
 
@@ -39,7 +39,7 @@ func TestPing_MarshalUnmarshal(t *testing.T) {
 
 func TestPing_Validate(t *testing.T) {
 	ping := &Ping{
-		MessageID: "test-ping-123",
+		MessageID: "test-iamserver-123",
 		Timestamp: time.Now(),
 	}
 
@@ -53,7 +53,7 @@ func TestPong_MarshalUnmarshal(t *testing.T) {
 	pingTime := time.Now().Add(-time.Second)
 	pongTime := time.Now()
 	pong := &Pong{
-		MessageID:     "test-ping-123",
+		MessageID:     "test-iamserver-123",
 		PingTimestamp: pingTime,
 		Timestamp:     pongTime,
 	}
@@ -82,7 +82,7 @@ func TestPong_MarshalUnmarshal(t *testing.T) {
 
 func TestPong_Validate(t *testing.T) {
 	pong := &Pong{
-		MessageID:     "test-ping-123",
+		MessageID:     "test-iamserver-123",
 		PingTimestamp: time.Now().Add(-time.Second),
 		Timestamp:     time.Now(),
 	}
@@ -96,7 +96,7 @@ func TestPong_Validate(t *testing.T) {
 func TestMessage_MarshalUnmarshalWithPingPayload(t *testing.T) {
 	now := time.Now()
 	pingPayload := &Ping{
-		MessageID: "test-ping-123",
+		MessageID: "test-iamserver-123",
 		Timestamp: now,
 	}
 	senderID := "server"
@@ -143,7 +143,7 @@ func TestMessage_MarshalUnmarshalWithPongPayload(t *testing.T) {
 	pingTime := time.Now().Add(-time.Second)
 	pongTime := time.Now()
 	pongPayload := &Pong{
-		MessageID:     "test-ping-123",
+		MessageID:     "test-iamserver-123",
 		PingTimestamp: pingTime,
 		Timestamp:     pongTime,
 	}
@@ -192,7 +192,7 @@ func TestMessage_MarshalUnmarshalWithPongPayload(t *testing.T) {
 
 func TestCreateMessage(t *testing.T) {
 	pingPayload := &Ping{
-		MessageID: "test-ping-123",
+		MessageID: "test-iamserver-123",
 		Timestamp: time.Now(),
 	}
 	senderID := "test-sender"
@@ -263,7 +263,7 @@ func (m *MockConnection) Read(_ context.Context) ([]byte, error) {
 	return nil, nil
 }
 
-// MockState for tracking ping/pong records
+// MockState for tracking iamserver/pong records
 type MockState struct {
 	pings  []*Ping
 	pongs  []*Pong

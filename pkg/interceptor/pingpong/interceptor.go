@@ -16,17 +16,17 @@ type Interceptor struct {
 	interceptor.NoOpInterceptor
 	states     map[interceptor.Connection]*state
 	maxHistory uint16
-	interval   time.Duration // Time between ping messages
-	ping       bool
+	interval   time.Duration // Time between iamserver messages
+	iamserver  bool
 }
 
-func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) error {
+func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) (interceptor.Writer, interceptor.Reader, error) {
 	i.Mutex.Lock()
 	defer i.Mutex.Unlock()
 
 	_, exists := i.states[connection]
 	if exists {
-		return errors.New("connection already exists")
+		return nil, nil, errors.New("connection already exists")
 	}
 
 	ctx, cancel := context.WithCancel(i.Ctx)
@@ -42,8 +42,17 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 		cancel: cancel,
 	}
 
-	if i.ping {
-		go i.loop(ctx, i.interval, connection)
+	return writer, reader, nil
+}
+
+func (i *Interceptor) Init(connection interceptor.Connection) error {
+	state, exists := i.states[connection]
+	if !exists {
+		return errors.New("connection not registered")
+	}
+
+	if i.iamserver {
+		go i.loop(state.ctx, i.interval, connection)
 	}
 
 	return nil
@@ -141,7 +150,7 @@ func (i *Interceptor) loop(ctx context.Context, interval time.Duration, connecti
 		case <-ticker.C:
 			state, exists := i.states[connection]
 			if !exists {
-				fmt.Println("error while trying to send ping:", errors.New("connection does not exists").Error())
+				fmt.Println("error while trying to send iamserver:", errors.New("connection does not exists").Error())
 				continue
 			}
 
@@ -151,7 +160,7 @@ func (i *Interceptor) loop(ctx context.Context, interval time.Duration, connecti
 			}
 
 			if err := state.writer.Write(connection, websocket.MessageText, msg); err != nil {
-				fmt.Println("error while trying to send ping:", err.Error())
+				fmt.Println("error while trying to send iamserver:", err.Error())
 				continue
 			}
 		}
@@ -175,7 +184,7 @@ func (payload *Ping) Process(interceptor interceptor.Interceptor, connection int
 	state.peerid = payload.SenderID
 	state.recordPing(payload)
 
-	if !i.ping {
+	if !i.iamserver {
 		msg, err := message.CreateMessage(i.ID, state.peerid, NewPong(i.ID, payload))
 		if err != nil {
 			return err

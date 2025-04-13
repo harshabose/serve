@@ -32,26 +32,24 @@ type (
 	key        [32]byte
 )
 
-var ServerPubKey = []byte(os.Getenv("SERVER_ENCRYPT_PUB_KEY"))
+var SeverPublicKey = []byte(os.Getenv("SERVER_ENCRYPT_PUB_KEY"))
 
 type Interceptor struct {
 	interceptor.NoOpInterceptor
 	states    map[interceptor.Connection]*state
 	iamserver bool
-	signKey   []byte
 }
 
-func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) error {
+func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) (interceptor.Writer, interceptor.Reader, error) {
 	i.Mutex.Lock()
 	defer i.Mutex.Unlock()
 
 	_, exists := i.states[connection]
 	if exists {
-		return errors.New("connection already exists")
+		return nil, nil, errors.New("connection already exists")
 	}
 
 	ctx, cancel := context.WithCancel(i.Ctx)
-
 	i.states[connection] = &state{
 		peerID:    "unknown",
 		encryptor: &aes256{},
@@ -61,11 +59,22 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 		ctx:       ctx,
 	}
 
-	if i.iamserver {
-		return i.init(connection)
+	return writer, reader, nil
+}
+
+func (i *Interceptor) Init(connection interceptor.Connection) error {
+	i.Mutex.Lock()
+	state, exists := i.states[connection]
+	if !exists {
+		return errors.New("connection not registered")
 	}
 
-	return nil
+	if err := i.init(connection); err != nil {
+		return err
+	}
+	i.Mutex.Unlock()
+
+	return state.waitUntilInit()
 }
 
 func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) interceptor.Writer {
@@ -170,7 +179,8 @@ func (i *Interceptor) init(connection interceptor.Connection) error {
 		return err
 	}
 
-	sign := ed25519.Sign(i.signKey, append(pubKey[:], state.salt[:]...))
+	serverPrivKey := []byte(os.Getenv("SERVER_ENCRYPT_PRIV_KEY"))
+	sign := ed25519.Sign(serverPrivKey, append(pubKey[:], state.salt[:]...))
 
 	if _, err := io.ReadFull(rand.Reader, sessionID[:]); err != nil {
 		return err
