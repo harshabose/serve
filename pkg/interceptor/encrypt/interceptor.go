@@ -16,13 +16,16 @@ import (
 
 	"github.com/harshabose/skyline_sonata/serve/pkg/interceptor"
 	"github.com/harshabose/skyline_sonata/serve/pkg/message"
+	"github.com/harshabose/skyline_sonata/serve/pkg/utils"
 )
 
+// IsZero is a generic function to check if a value is the zero value for its type
 func IsZero[T comparable](value T) bool {
 	var zero T
 	return value == zero
 }
 
+// Crypto-related type definitions for improved type safety
 type (
 	PrivateKey [32]byte
 	PublicKey  [32]byte
@@ -32,12 +35,26 @@ type (
 	key        [32]byte
 )
 
-var SeverPublicKey = []byte(os.Getenv("SERVER_ENCRYPT_PUB_KEY"))
+var (
+	// ServerPublicKey holds the public key for server verification
+	// Loaded from environment variable
+	ServerPublicKey []byte
+)
 
+// init loads the server keys from environment variables and validates them
+func init() {
+	ServerPublicKey = []byte(os.Getenv("SERVER_ENCRYPT_PUB_KEY"))
+	if len(ServerPublicKey) == 0 {
+		fmt.Println("WARNING: SERVER_ENCRYPT_PUB_KEY environment variable not set")
+	}
+}
+
+// Interceptor implements the encryption interceptor
 type Interceptor struct {
 	interceptor.NoOpInterceptor
-	states    map[interceptor.Connection]*state
-	iamserver bool
+	states          map[interceptor.Connection]*state
+	encryptorFactor EncryptorFactory
+	isServer        bool
 }
 
 func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, writer interceptor.Writer, reader interceptor.Reader) (interceptor.Writer, interceptor.Reader, error) {
@@ -50,9 +67,15 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 	}
 
 	ctx, cancel := context.WithCancel(i.Ctx)
+	encryptor, err := i.encryptorFactor()
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+
 	i.states[connection] = &state{
 		peerID:    "unknown",
-		encryptor: &aes256{},
+		encryptor: encryptor,
 		writer:    writer,
 		reader:    reader,
 		cancel:    cancel,
@@ -64,24 +87,26 @@ func (i *Interceptor) BindSocketConnection(connection interceptor.Connection, wr
 
 func (i *Interceptor) Init(connection interceptor.Connection) error {
 	i.Mutex.Lock()
+
 	state, exists := i.states[connection]
 	if !exists {
+		i.Mutex.Unlock()
 		return errors.New("connection not registered")
 	}
 
-	if err := i.init(connection); err != nil {
-		return err
-	}
-	i.Mutex.Unlock()
+	// Start the key exchange process
+	err := i.initialiseKeyExchange(connection)
+	i.Mutex.Unlock() // Unlock before waiting for initialization to avoid deadlock
 
+	if err != nil {
+		return fmt.Errorf("encryption initialization failed: %w", err)
+	}
+
+	// Wait for the key exchange to complete
 	return state.waitUntilInit()
 }
 
 func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) interceptor.Writer {
-	/*
-		Takes in any type of message.Message and encrypts it. In general, all implementations of
-		message.Message should use message.BaseMessage to implement message.Message.
-	*/
 	return interceptor.WriterFunc(func(connection interceptor.Connection, messageType websocket.MessageType, m message.Message) error {
 		i.Mutex.Lock()
 		defer i.Mutex.Unlock()
@@ -91,6 +116,7 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 			return writer.Write(connection, messageType, m)
 		}
 
+		// Only encrypt if encryption is ready
 		if state.encryptor.Ready() {
 			encrypted, err := state.encryptor.Encrypt(m.Message().SenderID, m.Message().ReceiverID, m)
 			if err != nil {
@@ -99,6 +125,7 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 			return writer.Write(connection, messageType, encrypted)
 		}
 
+		// Pass through unencrypted if encryption not ready // TODO: Is this what I want? Should I pass through
 		return writer.Write(connection, messageType, m)
 	})
 }
@@ -118,13 +145,14 @@ func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) intercept
 			return messageType, m, nil
 		}
 
+		// Process encrypted messages and protocol messages
 		payload, err := message.ProtocolUnmarshal(protocolMap, m.Message().Header.Protocol, m.Message().Payload)
 		if err != nil {
 			return messageType, m, nil
 		}
 
 		if err := payload.Process(i, connection); err != nil {
-			fmt.Println("error while processing encryptor m:", err.Error())
+			fmt.Println("error while processing Encryptor m:", err.Error())
 		}
 
 		return messageType, payload.Message(), nil
@@ -141,7 +169,13 @@ func (i *Interceptor) UnBindSocketConnection(connection interceptor.Connection) 
 		return
 	}
 
+	// Cancel the context to stop any ongoing operations
 	state.cancel()
+
+	// Clean up encryption resources
+	if err := state.encryptor.Close(); err != nil {
+		fmt.Printf("Error closing encryptor: %v\n", err)
+	}
 	delete(i.states, connection)
 }
 
@@ -153,43 +187,65 @@ func (i *Interceptor) Close() error {
 	i.Mutex.Lock()
 	defer i.Mutex.Unlock()
 
-	i.states = make(map[interceptor.Connection]*state)
+	var merr = utils.NewMultiError()
+	for conn, state := range i.states {
+		state.cancel()
+		if err := state.encryptor.Close(); err != nil {
+			_ = merr.Add(err)
+		}
+		delete(i.states, conn)
+	}
 
-	return nil
+	return merr.ErrorOrNil()
 }
 
-func (i *Interceptor) init(connection interceptor.Connection) error {
+func (i *Interceptor) initialiseKeyExchange(connection interceptor.Connection) error {
 	var (
 		pubKey    PublicKey
 		sessionID SessionID
 	)
+
+	i.Mutex.Lock()
+	defer i.Mutex.Unlock()
 
 	state, exists := i.states[connection]
 	if !exists {
 		return errors.New("connection not registered")
 	}
 
+	// Generate private key
 	if _, err := io.ReadFull(rand.Reader, state.privKey[:]); err != nil {
 		return err
 	}
 
+	// Calculate public key from private key
 	curve25519.ScalarBaseMult((*[32]byte)(&pubKey), (*[32]byte)(&state.privKey))
 
+	// Generate random salt for key derivation
 	if _, err := io.ReadFull(rand.Reader, state.salt[:]); err != nil {
 		return err
 	}
 
+	// Load server private key for signing
 	serverPrivKey := []byte(os.Getenv("SERVER_ENCRYPT_PRIV_KEY"))
+	if len(serverPrivKey) == 0 && i.isServer {
+		return errors.New("server private key not available")
+	}
+
+	// Generate signature for authentication
 	sign := ed25519.Sign(serverPrivKey, append(pubKey[:], state.salt[:]...))
 
+	// Generate session ID
 	if _, err := io.ReadFull(rand.Reader, sessionID[:]); err != nil {
 		return err
 	}
 	state.encryptor.SetSessionID(sessionID)
 
+	// Send initialization message
 	return state.writer.Write(connection, websocket.MessageText, NewInitMessage(i.ID, state.peerID, pubKey, sign, state.salt, sessionID))
 }
 
+// derive generates encryption keys from shared secret
 func derive(shared []byte, salt Salt, info string) (key, key, error) {
 	hkdfReader := hkdf.New(sha256.New, shared, salt[:], []byte(info))
 
