@@ -108,11 +108,8 @@ func (i *Interceptor) Init(connection interceptor.Connection) error {
 
 func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) interceptor.Writer {
 	return interceptor.WriterFunc(func(connection interceptor.Connection, messageType websocket.MessageType, m message.Message) error {
-		i.Mutex.Lock()
-		defer i.Mutex.Unlock()
-
-		state, exists := i.states[connection]
-		if !exists {
+		state, err := i.getState(connection)
+		if err != nil {
 			return writer.Write(connection, messageType, m)
 		}
 
@@ -132,16 +129,12 @@ func (i *Interceptor) InterceptSocketWriter(writer interceptor.Writer) intercept
 
 func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) interceptor.Reader {
 	return interceptor.ReaderFunc(func(connection interceptor.Connection) (websocket.MessageType, message.Message, error) {
-		i.Mutex.Lock()
-		defer i.Mutex.Unlock()
-
 		messageType, m, err := reader.Read(connection)
 		if err != nil {
 			return messageType, m, err
 		}
 
-		_, exists := i.states[connection]
-		if !exists {
+		if _, err := i.getState(connection); err != nil {
 			return messageType, m, nil
 		}
 
@@ -160,12 +153,9 @@ func (i *Interceptor) InterceptSocketReader(reader interceptor.Reader) intercept
 }
 
 func (i *Interceptor) UnBindSocketConnection(connection interceptor.Connection) {
-	i.Mutex.Lock()
-	defer i.Mutex.Unlock()
-
-	state, exists := i.states[connection]
-	if !exists {
-		fmt.Println("connection does not exists")
+	state, err := i.getState(connection)
+	if err != nil {
+		fmt.Println("Failed to get encryption state:", err.Error())
 		return
 	}
 
@@ -227,6 +217,8 @@ func (i *Interceptor) initialiseKeyExchange(connection interceptor.Connection) e
 	}
 
 	// Load server private key for signing
+	// NOTE: SECURITY RISK MAYBE. NOT A GOOD IDEA TO GET PRIV KEY FROM ENV VARS.
+	// NOTE: THEY MAYBE EASILY ACCESSIBLE FROM REMOTE PROCESS INSPECTION TOOLS.
 	serverPrivKey := []byte(os.Getenv("SERVER_ENCRYPT_PRIV_KEY"))
 	if len(serverPrivKey) == 0 && i.isServer {
 		return errors.New("server private key not available")
@@ -243,6 +235,18 @@ func (i *Interceptor) initialiseKeyExchange(connection interceptor.Connection) e
 
 	// Send initialization message
 	return state.writer.Write(connection, websocket.MessageText, NewInitMessage(i.ID, state.peerID, pubKey, sign, state.salt, sessionID))
+}
+
+func (i *Interceptor) getState(connection interceptor.Connection) (*state, error) {
+	i.Mutex.RLock()
+	defer i.Mutex.RUnlock()
+
+	state, exists := i.states[connection]
+	if !exists {
+		return nil, errors.New("connection not registered")
+	}
+
+	return state, nil
 }
 
 // derive generates encryption keys from shared secret
